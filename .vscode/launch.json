@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug: iTransformer HMem",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset", "ETTm1",
+                "--border_type", "online",
+                "--model", "iTransformer",
+                "--seq_len", "512",
+                "--pred_len", "96",
+                "--itr", "1",
+                "--online_method", "HMem",
+                "--only_test",
+                "--pretrain",
+                "--online_learning_rate", "0.0001",
+                "--lora_rank", "4",
+                "--lora_alpha", "8.0",
+                "--memory_dim", "128",
+                "--bottleneck_dim", "16",
+                "--memory_capacity", "100",
+                "--retrieval_top_k", "3",
+                "--hmem_warmup_steps", "10",
+                "--freeze", "True",
+                "--use_snma", "True",
+                "--use_chrc", "True"
+            ]
+        }
+    ]
+}
