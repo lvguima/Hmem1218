@@ -110,6 +110,8 @@ parser.add_argument('--chrc_feature_dim', type=int, default=128, help='CHRC POGT
 parser.add_argument('--chrc_temperature', type=float, default=0.1, help='Temperature for CHRC aggregation')
 parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Aggregation method for CHRC')
 parser.add_argument('--chrc_use_refinement', type=str_to_bool, default=True, help='Use refinement network in CHRC')
+parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
+                    help='Minimum absolute similarity for CHRC retrieval (abstain if below)')
 
 # H-Mem (General)
 parser.add_argument('--pogt_ratio', type=float, default=0.5, help='POGT ratio')

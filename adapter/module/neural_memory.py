@@ -241,6 +241,13 @@ class NeuralMemoryState(nn.Module):
             'std': self.memory.std(dim=-1) if self.memory is not None else None
         }
 
+    def detach_state(self):
+        """Detach memory state from the current autograd graph."""
+        if self.memory is not None:
+            self.memory = self.memory.detach()
+        if self.age is not None:
+            self.age = self.age.detach()
+
 
 class LoRAHyperNetwork(nn.Module):
     """
@@ -448,6 +455,10 @@ class SNMA(nn.Module):
     def reset(self, batch_size: int = 1, device: Optional[torch.device] = None):
         """Reset memory state."""
         self.memory.reset(batch_size, device)
+
+    def detach_state(self):
+        """Detach memory state to avoid graph growth between steps."""
+        self.memory.detach_state()
 
     def get_param_stats(self) -> Dict[str, int]:
         """Get parameter statistics."""

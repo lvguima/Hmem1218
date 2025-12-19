@@ -288,12 +288,11 @@ class Exp_HMem(Exp_Online):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
-        # IMPORTANT: Reset SNMA memory to free computation graph
-        # This prevents "backward through the graph a second time" error
+        # IMPORTANT: Detach SNMA memory to free computation graph without wiping state
         if hasattr(model, 'snma'):
-            model.snma.reset(batch_size=batch_x.size(0))
+            model.snma.detach_state()
         elif hasattr(model, 'module') and hasattr(model.module, 'snma'):
-            model.module.snma.reset(batch_size=batch_x.size(0))
+            model.module.snma.detach_state()
 
         # Store for delayed memory bank update
         if model.flag_store_errors:

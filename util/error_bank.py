@@ -446,7 +446,8 @@ class CHRC(nn.Module):
         top_k: int = 5,
         temperature: float = 0.1,
         aggregation: str = 'softmax',
-        use_refinement: bool = True
+        use_refinement: bool = True,
+        min_similarity: float = 0.0
     ):
         super().__init__()
 
@@ -457,6 +458,7 @@ class CHRC(nn.Module):
         self.top_k = top_k
         self.aggregation = aggregation
         self.use_refinement = use_refinement
+        self.min_similarity = min_similarity
 
         # POGT Feature Encoder
         self.pogt_encoder = POGTFeatureEncoder(
@@ -544,7 +546,8 @@ class CHRC(nn.Module):
         # Retrieve from memory bank
         retrieved_errors, similarities, valid_mask = self.memory_bank.retrieve(
             pogt_features,
-            top_k=self.top_k
+            top_k=self.top_k,
+            min_similarity=self.min_similarity
         )
 
         # Aggregate retrieved errors
@@ -643,4 +646,3 @@ class CHRC(nn.Module):
     def reset(self):
         """Reset CHRC state (clear memory bank)."""
         self.memory_bank.clear()
-

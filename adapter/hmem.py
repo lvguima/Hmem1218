@@ -107,7 +107,8 @@ class HMem(nn.Module):
                 top_k=self.retrieval_top_k,
                 temperature=getattr(args, 'chrc_temperature', 0.1),
                 aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
-                use_refinement=getattr(args, 'chrc_use_refinement', True)
+                use_refinement=getattr(args, 'chrc_use_refinement', True),
+                min_similarity=getattr(args, 'chrc_min_similarity', 0.0)
             )
         else:
             self.chrc = None
