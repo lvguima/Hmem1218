@@ -473,6 +473,7 @@ class Exp_HMem(Exp_Online):
         # Training loop
         for i, (recent_batch, current_batch) in enumerate(pbar):
             self._current_step = i
+            pogt_for_pred = None
 
             # Phase switching: warmup → joint training
             if self._warmup_phase and i >= self.warmup_steps:
@@ -510,6 +511,11 @@ class Exp_HMem(Exp_Online):
                 if len(self.pending_updates) > 0:
                     self._process_delayed_updates(i, batch_y[:, -self.args.pred_len:, :])
 
+                # Build POGT for prediction from observed recent data (avoid leakage)
+                recent_y = batch_y.float().to(self.device)
+                if recent_y.size(1) >= model.pogt_len:
+                    pogt_for_pred = self._extract_pogt(recent_y, full_gt=False)
+
             # Make prediction for current window
             with torch.no_grad():
                 model.eval()
@@ -520,11 +526,8 @@ class Exp_HMem(Exp_Online):
                 if batch_x_mark is not None:
                     batch_x_mark = batch_x_mark.float().to(self.device)
 
-                # Extract POGT if available
-                if batch_y.size(1) > model.pogt_len:
-                    pogt = self._extract_pogt(batch_y, full_gt=False)
-                else:
-                    pogt = None
+                # Use POGT from observed recent batch only
+                pogt = pogt_for_pred
 
                 # Predict
                 pred = model(batch_x, batch_x_mark, pogt=pogt, return_components=False)
