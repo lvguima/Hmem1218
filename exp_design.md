@@ -89,8 +89,8 @@ python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq
 MSE:0.965773, MAE:0.625035, RMSE:0.982738
 
 # Weather - DERpp
-python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method DERpp --only_test --pretrain --online_learning_rate 1e-4 --freeze False
-
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method DERpp --only_test --pretrain --online_learning_rate 1e-4 --freeze False  
+MSE:1.806952, MAE:0.768072, RMSE:1.344229
 # ETTm1 - SOLID (stronger online baseline, uses internal selection)
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method SOLID --only_test --pretrain --freeze False
 MSE:0.829228, MAE:0.583832, RMSE:0.910620
@@ -111,12 +111,13 @@ MSE:1.723247, MAE:0.737336, RMSE:1.312725
 ```bash
 # Aggressive (1e-4) - Expected: High Variance / Fail
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-4 --use_snma True --use_chrc True
-
+ MSE: 0.963404 | MAE: 0.631281 | RMSE: 0.981531
 # Balanced (1e-5) - Expected: Good
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma True --use_chrc True
-
+MSE: 0.810700 | MAE: 0.571988 | RMSE: 0.90038
 # Conservative (1e-6) - Expected: Too slow, close to baseline
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-6 --use_snma True --use_chrc True
+MSE: 0.854385 | MAE: 0.606565 | RMSE: 0.924329
 ```
 
 ### B2. LoRA Rank & Expressiveness (ETTm1)
@@ -124,9 +125,11 @@ python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq
 ```bash
 # Low Rank (4) - Regularization
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --lora_rank 4 --lora_alpha 8.0 --use_snma True --use_chrc True
+ MSE: 0.780092 | MAE: 0.558867 | RMSE: 0.88322
 
 # High Rank (32) - High Expressiveness
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --lora_rank 32 --lora_alpha 64.0 --use_snma True --use_chrc True
+MSE: 0.976557 | MAE: 0.646522 | RMSE: 0.988209
 ```
 
 ---
@@ -140,9 +143,11 @@ python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq
 ```bash
 # Short Memory (500)
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --memory_capacity 500 --use_snma True --use_chrc True
+ MSE: 0.810700 | MAE: 0.571988 | RMSE: 0.900389
 
 # Long Memory (4000) - Already proven good, validating repeatability
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --memory_capacity 4000 --use_snma True --use_chrc True
+ MSE: 0.810700 | MAE: 0.571988 | RMSE: 0.900389
 ```
 
 ### C2. Retrieval Mechanism (Weather - Critical)
@@ -150,9 +155,10 @@ python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq
 ```bash
 # Softmax + Low Temp (Sharp selection)
 python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 5e-6 --chrc_aggregation softmax --chrc_temperature 0.1 --use_snma False --use_chrc True
-
+MSE: 1.848291 | MAE: 0.793653 | RMSE: 1.359519
 # Weighted Mean (Smooth aggregation) - Expected winner for Weather
 python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 5e-6 --chrc_aggregation weighted_mean --use_snma False --use_chrc True
+ MSE: 1.580690 | MAE: 0.716628 | RMSE: 1.257255
 ```
 
 ---
@@ -170,15 +176,7 @@ python -u run.py --dataset Weather --border_type online --model iTransformer --s
 
 ```bash
 # The "Safe Mode" Run
-python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain \
-  --online_learning_rate 1e-6 \
-  --hmem_warmup_steps 500 \
-  --lora_rank 4 \
-  --lora_dropout 0.2 \
-  --use_snma True \
-  --use_chrc True \
-  --chrc_aggregation weighted_mean \
-  --pogt_ratio 0.25
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain online_learning_rate 1e-6 --hmem_warmup_steps 500 --lora_rank 4 --lora_dropout 0.2 --use_snma True --use_chrc True --chrc_aggregation weighted_mean --pogt_ratio 0.25
 ```
 
 ---
