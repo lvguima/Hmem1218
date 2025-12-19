@@ -133,7 +133,10 @@ class ErrorMemoryBank(nn.Module):
         num_features: int = 7,
         decay_factor: float = 0.995,
         temperature: float = 0.1,
-        min_entries_for_retrieval: int = 10
+        min_entries_for_retrieval: int = 10,
+        forget_decay: float = 1.0,
+        forget_threshold: float = 0.0,
+        max_age: int = 0
     ):
         super().__init__()
 
@@ -144,6 +147,9 @@ class ErrorMemoryBank(nn.Module):
         self.decay_factor = decay_factor
         self.temperature = temperature
         self.min_entries_for_retrieval = min_entries_for_retrieval
+        self.forget_decay = forget_decay
+        self.forget_threshold = forget_threshold
+        self.max_age = max_age
 
         # Storage buffers (registered as buffers for state_dict persistence)
         self.register_buffer('keys', torch.zeros(capacity, feature_dim))
@@ -205,6 +211,42 @@ class ErrorMemoryBank(nn.Module):
 
         return scores
 
+    def _prune_stale_entries(self):
+        """Drop entries that are too old or too low importance."""
+        n = self.current_size
+        if n == 0:
+            return
+
+        mask = torch.ones(n, dtype=torch.bool, device=self.keys.device)
+        if self.forget_threshold > 0:
+            mask = mask & (self.importance_scores[:n] >= self.forget_threshold)
+        if self.max_age and self.max_age > 0:
+            age = (self.global_step - self.timestamps[:n]).float()
+            mask = mask & (age <= self.max_age)
+
+        if mask.all():
+            return
+
+        keep_idx = torch.nonzero(mask, as_tuple=False).flatten()
+        new_n = int(keep_idx.numel())
+
+        if new_n > 0:
+            self.keys[:new_n] = self.keys[keep_idx]
+            self.values[:new_n] = self.values[keep_idx]
+            self.timestamps[:new_n] = self.timestamps[keep_idx]
+            self.access_counts[:new_n] = self.access_counts[keep_idx]
+            self.importance_scores[:new_n] = self.importance_scores[keep_idx]
+
+        if new_n < n:
+            self.keys[new_n:n].zero_()
+            self.values[new_n:n].zero_()
+            self.timestamps[new_n:n].zero_()
+            self.access_counts[new_n:n].zero_()
+            self.importance_scores[new_n:n].zero_()
+
+        self.num_entries.fill_(new_n)
+        self.write_pointer.fill_(new_n % self.capacity)
+
     def _get_write_index(self) -> int:
         """Get index for writing new entry."""
         if not self.is_full:
@@ -240,6 +282,11 @@ class ErrorMemoryBank(nn.Module):
         # Normalize importance
         importance = importance / (importance.max() + 1e-8)
 
+        # Apply active forgetting to existing entries
+        n = self.current_size
+        if n > 0 and self.forget_decay < 1.0:
+            self.importance_scores[:n] *= self.forget_decay
+
         for i in range(batch_size):
             idx = self._get_write_index()
 
@@ -250,6 +297,9 @@ class ErrorMemoryBank(nn.Module):
             self.importance_scores[idx] = importance[i].detach()
 
         self.global_step += 1
+
+        if self.forget_threshold > 0 or (self.max_age and self.max_age > 0):
+            self._prune_stale_entries()
 
     def retrieve(
         self,
@@ -447,7 +497,10 @@ class CHRC(nn.Module):
         temperature: float = 0.1,
         aggregation: str = 'softmax',
         use_refinement: bool = True,
-        min_similarity: float = 0.0
+        min_similarity: float = 0.0,
+        forget_decay: float = 1.0,
+        forget_threshold: float = 0.0,
+        max_age: int = 0
     ):
         super().__init__()
 
@@ -473,11 +526,14 @@ class CHRC(nn.Module):
             feature_dim=feature_dim,
             horizon=horizon,
             num_features=num_features,
-            temperature=temperature
+            temperature=temperature,
+            forget_decay=forget_decay,
+            forget_threshold=forget_threshold,
+            max_age=max_age
         )
 
-        # Confidence gate: decides how much to trust retrieved correction
-        gate_input_dim = feature_dim + horizon * num_features * 2  # pogt_feat + pred + correction
+        # Confidence gate: use compact summary stats to avoid high-dimensional overfitting
+        gate_input_dim = feature_dim + 4  # pogt_feat + [pred_mean, pred_std, corr_mean, corr_std]
         self.confidence_gate = nn.Sequential(
             nn.Linear(gate_input_dim, feature_dim),
             nn.LayerNorm(feature_dim),
@@ -582,12 +638,13 @@ class CHRC(nn.Module):
         else:
             correction = aggregated_error
 
-        # Compute confidence gate
-        gate_input = torch.cat([
-            pogt_features,
-            prediction.reshape(batch_size, -1),
-            correction.reshape(batch_size, -1)
-        ], dim=-1)
+        # Compute confidence gate with compact stats
+        pred_mean = prediction.abs().mean(dim=(1, 2))
+        pred_std = prediction.std(dim=(1, 2), unbiased=False)
+        corr_mean = correction.abs().mean(dim=(1, 2))
+        corr_std = correction.std(dim=(1, 2), unbiased=False)
+        stats = torch.stack([pred_mean, pred_std, corr_mean, corr_std], dim=-1)
+        gate_input = torch.cat([pogt_features, stats], dim=-1)
         confidence = self.confidence_gate(gate_input)  # [batch, 1]
 
         # Modulate confidence by retrieval quality and validity

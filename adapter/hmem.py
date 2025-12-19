@@ -115,7 +115,10 @@ class HMem(nn.Module):
                 temperature=getattr(args, 'chrc_temperature', 0.1),
                 aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
                 use_refinement=getattr(args, 'chrc_use_refinement', True),
-                min_similarity=getattr(args, 'chrc_min_similarity', 0.0)
+                min_similarity=getattr(args, 'chrc_min_similarity', 0.0),
+                forget_decay=getattr(args, 'chrc_forget_decay', 1.0),
+                forget_threshold=getattr(args, 'chrc_forget_threshold', 0.0),
+                max_age=getattr(args, 'chrc_max_age', 0)
             )
         else:
             self.chrc = None

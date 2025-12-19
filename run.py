@@ -116,6 +116,12 @@ parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Agg
 parser.add_argument('--chrc_use_refinement', type=str_to_bool, default=True, help='Use refinement network in CHRC')
 parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
                     help='Minimum absolute similarity for CHRC retrieval (abstain if below)')
+parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
+                    help='Decay factor for CHRC memory importance (<=1.0)')
+parser.add_argument('--chrc_forget_threshold', type=float, default=0.0,
+                    help='Drop CHRC memory entries below this importance threshold')
+parser.add_argument('--chrc_max_age', type=int, default=0,
+                    help='Drop CHRC memory entries older than this many steps (0 disables)')
 
 # H-Mem (General)
 parser.add_argument('--pogt_ratio', type=float, default=0.5, help='POGT ratio')

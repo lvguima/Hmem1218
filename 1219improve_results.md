@@ -77,3 +77,20 @@ python -u run.py --dataset Weather --border_type online --model iTransformer --s
 | :--- | :--- | :--- | :--- | :--- |
 | ETTm1 | 1.193117 | 0.697323 | 1.092299 | User rerun |
 | Weather | 2.983787 | 1.040027 | 1.727364 | User rerun |
+
+---
+
+## P1: HyperNetwork Volatility Reduction (LoRA EMA)
+
+**Commands:**
+```bash
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma True --use_chrc True --lora_ema_decay 0.9 --chrc_min_similarity 0.9
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 5e-6 --use_snma False --use_chrc True --chrc_aggregation weighted_mean --lora_ema_decay 0.9 --chrc_min_similarity 0.9
+```
+
+| Dataset | MSE | MAE | RMSE | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| ETTm1 | 0.788969 | 0.562364 | 0.888239 | User-run result with EMA |
+| Weather | 1.480340 | 0.675052 | 1.216692 | User-run result with EMA |
+
+**Observation:** Both datasets improved vs prior causal POGT runs; EMA appears stabilizing.
