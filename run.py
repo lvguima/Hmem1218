@@ -104,6 +104,8 @@ parser.add_argument('--lora_ema_decay', type=float, default=0.0,
 parser.add_argument('--memory_dim', type=int, default=256, help='Neural memory dimension')
 parser.add_argument('--memory_momentum', type=float, default=0.9, help='Momentum for surprise running stats')
 parser.add_argument('--memory_num_heads', type=int, default=4, help='Number of heads for memory read attention')
+parser.add_argument('--hmem_share_pogt', type=str_to_bool, default=False,
+                    help='Share POGT representation between SNMA and CHRC')
 
 # H-Mem (CHRC)
 parser.add_argument('--memory_capacity', type=int, default=1000, help='Error memory bank capacity')

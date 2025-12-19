@@ -523,6 +523,7 @@ class CHRC(nn.Module):
         self,
         prediction: torch.Tensor,
         pogt: torch.Tensor,
+        pogt_features: Optional[torch.Tensor] = None,
         return_details: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict]]:
         """
@@ -540,8 +541,9 @@ class CHRC(nn.Module):
         batch_size = prediction.size(0)
         device = prediction.device
 
-        # Encode POGT
-        pogt_features = self.encode_pogt(pogt)  # [batch, feature_dim]
+        # Encode POGT (or reuse shared features if provided)
+        if pogt_features is None:
+            pogt_features = self.encode_pogt(pogt)  # [batch, feature_dim]
 
         # Retrieve from memory bank
         retrieved_errors, similarities, valid_mask = self.memory_bank.retrieve(

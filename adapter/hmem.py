@@ -64,11 +64,17 @@ class HMem(nn.Module):
         self.retrieval_top_k = getattr(args, 'retrieval_top_k', 5)
         self.pogt_ratio = getattr(args, 'pogt_ratio', 0.5)
         self.chrc_feature_dim = getattr(args, 'chrc_feature_dim', 128)
+        self.share_pogt = getattr(args, 'hmem_share_pogt', False)
         self.use_chrc = getattr(args, 'use_chrc', True)
         self.freeze_backbone = getattr(args, 'freeze', True)
 
         # Calculate POGT length
         self.pogt_len = max(1, int(self.pred_len * self.pogt_ratio))
+
+        # If sharing POGT representations, align CHRC feature dim with SNMA encoding dim
+        if self.share_pogt and self.chrc_feature_dim != self.memory_dim:
+            self.chrc_feature_dim = self.memory_dim
+            args.chrc_feature_dim = self.chrc_feature_dim
 
         # 1. Inject LoRA layers into backbone and freeze if needed
         if self.freeze_backbone:
@@ -220,8 +226,15 @@ class HMem(nn.Module):
             return outputs if return_components else base_pred
 
         # Step 2: SNMA - Generate LoRA params from POGT (Original HyperNetwork-based)
+        pogt_features = None
         if self.flag_use_snma:
-            lora_params, memory_state = self.snma(pogt)
+            if self.share_pogt:
+                lora_params, diagnostics = self.snma(pogt, return_diagnostics=True)
+                memory_state = diagnostics['memory_state']
+                pogt_features = diagnostics['encoding']
+            else:
+                lora_params, memory_state = self.snma(pogt)
+                pogt_features = None
             lora_params = self._smooth_lora_params(lora_params)
             outputs['memory_state'] = memory_state
 
@@ -248,7 +261,7 @@ class HMem(nn.Module):
             else:
                 # Apply CHRC correction
                 corrected_pred, chrc_details = self.chrc(
-                    adapted_pred, pogt, return_details=True
+                    adapted_pred, pogt, pogt_features=pogt_features, return_details=True
                 )
 
                 outputs['correction'] = chrc_details['correction']
@@ -367,6 +380,7 @@ class HMem(nn.Module):
             'chrc_feature_dim': self.chrc_feature_dim,
             'use_chrc': self.use_chrc,
             'freeze_backbone': self.freeze_backbone,
+            'share_pogt': self.share_pogt,
         }
 
 
