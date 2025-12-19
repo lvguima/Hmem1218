@@ -1,0 +1,27 @@
+### ettm1
+
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --train_epochs 10 --batch_size 32 --learning_rate 0.0001 --patience 3 --itr 3
+MSE:0.829312, MAE:0.583861, RMSE:0.910666
+
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-4 --lora_rank 8 --lora_alpha 16.0 --memory_dim 256 --bottleneck_dim 32 --memory_capacity 500 --retrieval_top_k 5 --hmem_warmup_steps 100 --freeze True --use_snma True --use_chrc False   MSE: 1.252954 | MAE: 0.714114
+
+
+
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --lora_rank 8 --lora_alpha 16.0 --memory_dim 256 --bottleneck_dim 32 --memory_capacity 2000 --retrieval_top_k 5 --hmem_warmup_steps 100 --freeze True --use_snma False --use_chrc True --chrc_aggregation weighted_mean   MSE: 0.834648 | MAE: 0.588950
+
+
+
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --lora_rank 8 --lora_alpha 16.0 --memory_dim 256 --bottleneck_dim 32 --memory_capacity 4000 --retrieval_top_k 10 --hmem_warmup_steps 200 --freeze True --use_snma True --use_chrc True --chrc_aggregation softmax --chrc_temperature 0.5   MSE: 0.826523 | MAE: 0.582172
+
+
+
+### weather
+
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --train_epochs 10 --batch_size 32 --learning_rate 0.0001 --patience 5 --itr 1 MSE:1.714112, MAE:0.734446
+
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-4 --lora_rank 8 --lora_alpha 16.0 --memory_dim 256 --bottleneck_dim 32 --memory_capacity 1000 --retrieval_top_k 5 --hmem_warmup_steps 100 --freeze True --use_snma False --use_chrc True --chrc_aggregation weighted_mean  --chrc_temperature 0.2  MSE: 1.934221 | MAE: 0.804814 | RMSE: 1.390763
+
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-4 --lora_rank 8 --lora_alpha 16.0 --memory_dim 256 --bottleneck_dim 32 --memory_capacity 1000 --retrieval_top_k 5 --hmem_warmup_steps 100 --freeze True --use_snma True --use_chrc True --chrc_aggregation weighted_mean --chrc_temperature 0.2  MSE: 2.998369 | MAE: 1.045282 | RMSE: 1.731580
+
+
+python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-4 --lora_rank 8 --lora_alpha 16.0 --memory_dim 256 --bottleneck_dim 32 --memory_capacity 1000 --retrieval_top_k 5 --hmem_warmup_steps 100 --freeze True --use_snma True --use_chrc False --chrc_aggregation weighted_mean   MSE: 3.481849 | MAE: 1.110231 | RMSE: 1.865971

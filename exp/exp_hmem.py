@@ -75,7 +75,7 @@ class Exp_HMem(Exp_Online):
 
         return hmem_model.to(self.device)
 
-    def _select_optimizer(self, filter_frozen: bool = True):
+    def _select_optimizer(self, filter_frozen: bool = True, return_self: bool = True, model=None):
         """
         Create optimizer with different learning rates for components.
 
@@ -83,8 +83,30 @@ class Exp_HMem(Exp_Online):
         1. SNMA (neural memory)
         2. CHRC (retrieval corrector)
         3. Backbone (usually frozen)
+
+        Args:
+            filter_frozen: Whether to filter frozen parameters (ignored for H-Mem)
+            return_self: Whether to return cached optimizer (ignored for H-Mem)
+            model: Model to optimize. If provided during init, we skip optimizer creation.
+
+        Note:
+            During _build_model(), parent class may call this with a backbone model.
+            We return None because H-Mem wraps the backbone and creates optimizer later.
         """
-        model = self._model.module if hasattr(self._model, 'module') else self._model
+        # If called during _build_model() with a model parameter (backbone)
+        # We can't create the optimizer yet because HMem wrapper doesn't exist
+        if model is not None and not hasattr(self, 'model'):
+            # During initialization, just return None
+            # Optimizer will be created in online() method
+            return None
+
+        # After initialization, create optimizer for HMem components
+        if model is None:
+            if not hasattr(self, 'model'):
+                return None
+            model = self._model.module if hasattr(self._model, 'module') else self._model
+        elif hasattr(model, 'module'):
+            model = model.module
 
         # Collect parameters
         param_groups = []

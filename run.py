@@ -252,6 +252,10 @@ if args.online_method and args.online_method.endswith('_leak'):
     args.online_method = args.online_method[:-len('_leak')]
     args.leakage = True
 
+# Treat textual "none"/"null"/"false"/"0" as no online method
+if args.online_method and args.online_method.lower() in ['none', 'null', 'false', '0', 'no']:
+    args.online_method = None
+
 if args.tag and args.tag[0] != '_':
     args.tag = '_' + args.tag
 
