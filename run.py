@@ -97,6 +97,8 @@ parser.add_argument('--learning_rate_bias', type=float, default=0.001, help='opt
 parser.add_argument('--lora_rank', type=int, default=8, help='LoRA rank')
 parser.add_argument('--lora_alpha', type=float, default=16.0, help='LoRA alpha (scaling factor)')
 parser.add_argument('--lora_dropout', type=float, default=0.0, help='LoRA dropout')
+parser.add_argument('--lora_ema_decay', type=float, default=0.0,
+                    help='EMA decay for LoRA params (0 disables smoothing)')
 
 # H-Mem (Neural Memory)
 parser.add_argument('--memory_dim', type=int, default=256, help='Neural memory dimension')

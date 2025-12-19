@@ -57,6 +57,7 @@ class HMem(nn.Module):
         # H-Mem specific parameters
         self.lora_rank = getattr(args, 'lora_rank', 8)
         self.lora_alpha = getattr(args, 'lora_alpha', 16.0)
+        self.lora_ema_decay = getattr(args, 'lora_ema_decay', 0.0)
         self.memory_dim = getattr(args, 'memory_dim', 256)
         self.bottleneck_dim = getattr(args, 'bottleneck_dim', 32)
         self.memory_capacity = getattr(args, 'memory_capacity', 1000)
@@ -118,6 +119,7 @@ class HMem(nn.Module):
         self._last_pogt: Optional[torch.Tensor] = None
         self._last_prediction: Optional[torch.Tensor] = None
         self._mode = 'train'  # 'train', 'eval', 'online'
+        self._lora_ema_params: Dict[str, torch.Tensor] = {}
 
         # Flags for controlling behavior (read from args!)
         self.flag_use_snma = getattr(args, 'use_snma', True)
@@ -143,6 +145,31 @@ class HMem(nn.Module):
     def _clear_lora_params(self):
         """Clear LoRA parameters from backbone layers."""
         clear_all_lora_params(self.backbone)
+
+    def _ema_update(self, key: str, current: torch.Tensor) -> torch.Tensor:
+        """EMA update for a LoRA tensor while keeping gradients for current step."""
+        decay = self.lora_ema_decay
+        prev = self._lora_ema_params.get(key)
+        if prev is None or prev.shape != current.shape or prev.device != current.device:
+            prev = current.detach()
+        ema = decay * prev + (1 - decay) * current
+        self._lora_ema_params[key] = ema.detach()
+        return ema
+
+    def _smooth_lora_params(
+        self,
+        lora_params: Dict[str, Tuple[torch.Tensor, torch.Tensor]]
+    ) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
+        """Apply EMA smoothing to LoRA parameters if enabled."""
+        if self.lora_ema_decay <= 0:
+            return lora_params
+        smoothed = {}
+        for name, (A, B) in lora_params.items():
+            smoothed[name] = (
+                self._ema_update(f'{name}.A', A),
+                self._ema_update(f'{name}.B', B),
+            )
+        return smoothed
 
     def forward(
         self,
@@ -195,6 +222,7 @@ class HMem(nn.Module):
         # Step 2: SNMA - Generate LoRA params from POGT (Original HyperNetwork-based)
         if self.flag_use_snma:
             lora_params, memory_state = self.snma(pogt)
+            lora_params = self._smooth_lora_params(lora_params)
             outputs['memory_state'] = memory_state
 
             # Step 3: Get adapted prediction (with LoRA)
@@ -281,6 +309,7 @@ class HMem(nn.Module):
         self._is_cold_start = torch.tensor(True)
         self._last_pogt = None
         self._last_prediction = None
+        self._lora_ema_params = {}
 
     def freeze_snma(self, freeze: bool = True):
         """Freeze/unfreeze SNMA parameters."""
@@ -328,6 +357,7 @@ class HMem(nn.Module):
         return {
             'lora_rank': self.lora_rank,
             'lora_alpha': self.lora_alpha,
+            'lora_ema_decay': self.lora_ema_decay,
             'memory_dim': self.memory_dim,
             'bottleneck_dim': self.bottleneck_dim,
             'memory_capacity': self.memory_capacity,

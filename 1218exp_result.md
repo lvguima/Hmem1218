@@ -108,42 +108,6 @@ The comprehensive testing of the H-Mem framework has revealed a critical dichoto
 
 ---
 
-## 3.5. Post-Change Validation (POGT Causality Fix)
-
-**Change:** P0-1 — POGT for prediction sourced only from observed `recent_batch` (avoid using `current_batch` GT).  
-**Commands:**
-```bash
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma True --use_chrc True
-python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 5e-6 --use_snma False --use_chrc True --chrc_aggregation weighted_mean
-```
-
-| Dataset | MSE | MAE | RMSE | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| ETTm1 | 1.015220 | 0.645267 | 1.007581 | User-run result after POGT causal change |
-| Weather | 4.584300 | 1.274634 | 2.141098 | User-run result after POGT causal change |
-
-**Interpretation:** This causality-correct fix significantly reduced performance, indicating the previous pipeline relied on stronger (possibly non-causal) POGT signals. This highlights a gap between causal online conditions and current H-Mem adaptation strength.
-
----
-
-## 3.6. Post-Change Validation (SNMA Memory Detach)
-
-**Change:** P0-2 — Preserve SNMA memory across steps via `detach_state()` (no per-step reset).  
-**Commands:**
-```bash
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma True --use_chrc True
-python -u run.py --dataset Weather --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 5e-6 --use_snma False --use_chrc True --chrc_aggregation weighted_mean
-```
-
-| Dataset | MSE | MAE | RMSE | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| ETTm1 | 1.015220 | 0.645267 | 1.007581 | User-run result after SNMA detach change |
-| Weather | 4.584300 | 1.274634 | 2.141098 | User-run result after SNMA detach change |
-
-**Interpretation:** Results are identical to P0-1, suggesting the causality-correct POGT signal dominates behavior or the SNMA memory persistence did not materially change outcomes under this setting.
-
----
-
 ## 4. Anomalies & Issues (RESOLVED)
 
 **The "Capacity Illusion" (Series C1):**
