@@ -345,8 +345,14 @@ class ErrorMemoryBank(nn.Module):
         self,
         query: torch.Tensor,
         top_k: int = 5,
-        min_similarity: float = 0.0
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        min_similarity: float = 0.0,
+        prev_topk_indices: Optional[torch.Tensor] = None,
+        trajectory_bias: float = 0.0,
+        return_indices: bool = False
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+    ]:
         """
         Retrieve top-K similar error patterns.
 
@@ -354,11 +360,15 @@ class ErrorMemoryBank(nn.Module):
             query: Query POGT features [batch, feature_dim]
             top_k: Number of entries to retrieve
             min_similarity: Minimum similarity threshold
+            prev_topk_indices: Previous top-K indices for trajectory bias
+            trajectory_bias: Bias strength for successor indices
+            return_indices: Whether to return top-K indices
 
         Returns:
             retrieved_values: [batch, top_k, horizon, num_features]
             similarities: [batch, top_k]
             valid_mask: [batch, top_k] boolean mask for valid retrievals
+            top_indices: (optional) [batch, top_k]
         """
         batch_size = query.size(0)
         n = self.current_size
@@ -366,11 +376,15 @@ class ErrorMemoryBank(nn.Module):
 
         # Handle empty or insufficient memory
         if n < self.min_entries_for_retrieval:
-            return (
+            empty_indices = torch.full((batch_size, top_k), -1, device=device, dtype=torch.long)
+            results = (
                 torch.zeros(batch_size, top_k, self.horizon, self.num_features, device=device),
                 torch.zeros(batch_size, top_k, device=device),
                 torch.zeros(batch_size, top_k, dtype=torch.bool, device=device)
             )
+            if return_indices:
+                return results + (empty_indices,)
+            return results
 
         # Get valid entries
         valid_keys = self.keys[:n]  # [n, feature_dim]
@@ -387,6 +401,20 @@ class ErrorMemoryBank(nn.Module):
         age = (self.global_step - valid_timestamps).float()
         decay = torch.pow(self.decay_factor, age)  # [n]
         similarities = similarities * decay.unsqueeze(0)  # [batch, n]
+
+        # Apply trajectory bias for successor indices
+        if trajectory_bias > 0 and prev_topk_indices is not None:
+            prev_topk_indices = prev_topk_indices.to(device)
+            successor_mask = torch.zeros_like(similarities)
+            for b in range(batch_size):
+                for idx in prev_topk_indices[b]:
+                    idx_val = int(idx.item())
+                    if idx_val < 0:
+                        continue
+                    next_idx = idx_val + 1
+                    if next_idx < n:
+                        successor_mask[b, next_idx] = trajectory_bias
+            similarities = similarities + successor_mask
 
         # Get top-K
         actual_k = min(top_k, n)
@@ -420,7 +448,11 @@ class ErrorMemoryBank(nn.Module):
             retrieved = F.pad(retrieved, (0, 0, 0, 0, 0, pad_size))
             top_sims = F.pad(top_sims, (0, pad_size))
             valid_mask = F.pad(valid_mask, (0, pad_size), value=False)
+            pad_indices = torch.full((batch_size, pad_size), -1, device=device, dtype=top_indices.dtype)
+            top_indices = torch.cat([top_indices, pad_indices], dim=1)
 
+        if return_indices:
+            return retrieved, top_sims, valid_mask, top_indices
         return retrieved, top_sims, valid_mask
 
     def aggregate(
@@ -547,6 +579,7 @@ class CHRC(nn.Module):
         use_dual_key: bool = True,
         trust_threshold: float = 0.5,
         gate_steepness: float = 10.0,
+        trajectory_bias: float = 0.0,
         min_similarity: float = 0.0,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
@@ -564,7 +597,9 @@ class CHRC(nn.Module):
         self.use_dual_key = use_dual_key
         self.trust_threshold = trust_threshold
         self.gate_steepness = gate_steepness
+        self.trajectory_bias = trajectory_bias
         self.min_similarity = min_similarity
+        self.last_topk_indices: Optional[torch.Tensor] = None
 
         # POGT Feature Encoder
         self.pogt_encoder = POGTFeatureEncoder(
@@ -699,11 +734,20 @@ class CHRC(nn.Module):
         )
 
         # Retrieve from memory bank
-        retrieved_errors, similarities, valid_mask = self.memory_bank.retrieve(
+        retrieved_errors, similarities, valid_mask, top_indices = self.memory_bank.retrieve(
             query_key,
             top_k=self.top_k,
-            min_similarity=self.min_similarity
+            min_similarity=self.min_similarity,
+            prev_topk_indices=self.last_topk_indices if self.trajectory_bias > 0 else None,
+            trajectory_bias=self.trajectory_bias,
+            return_indices=True
         )
+        if self.trajectory_bias > 0:
+            masked_indices = top_indices.clone()
+            masked_indices[~valid_mask] = -1
+            self.last_topk_indices = masked_indices.detach()
+        else:
+            self.last_topk_indices = None
 
         # Aggregate retrieved errors
         aggregated_error = self.memory_bank.aggregate(
@@ -817,3 +861,8 @@ class CHRC(nn.Module):
     def reset(self):
         """Reset CHRC state (clear memory bank)."""
         self.memory_bank.clear()
+        self.reset_trajectory()
+
+    def reset_trajectory(self):
+        """Reset trajectory state (call at sequence boundaries)."""
+        self.last_topk_indices = None

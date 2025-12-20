@@ -110,3 +110,15 @@ python -u run.py --dataset Weather --border_type online --model iTransformer \
 - Baseline vs `chrc_min_similarity` 变化：____
 - 相似度分布是否过窄：____
 - `batch_x` vs `batch_y` 差异（泄漏收益）：____
+
+---
+
+## P1 Results (Dual-Key Comparison)
+
+ETTm1
+- chrc_use_dual_key=False: MSE=0.777628  MAE=0.561764  RMSE=0.881832
+- chrc_use_dual_key=True: MSE=0.777710  MAE=0.560736  RMSE=0.881879
+
+Weather
+- chrc_use_dual_key=False: MSE=1.770241  MAE=0.770953  RMSE=1.330504
+- chrc_use_dual_key=True: MSE=1.916031  MAE=0.815432  RMSE=1.384208
