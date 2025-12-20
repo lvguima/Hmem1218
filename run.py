@@ -116,8 +116,12 @@ parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Agg
 parser.add_argument('--chrc_use_refinement', type=str_to_bool, default=True, help='Use refinement network in CHRC')
 parser.add_argument('--chrc_use_dual_key', type=str_to_bool, default=True,
                     help='Use dual-key (POGT + prediction) for CHRC retrieval')
+parser.add_argument('--chrc_trust_threshold', type=float, default=0.5,
+                    help='Similarity trust threshold for CHRC soft gating')
+parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
+                    help='Steepness for CHRC soft gating')
 parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
-                    help='Minimum absolute similarity for CHRC retrieval (abstain if below)')
+                    help='Deprecated: minimum absolute similarity for CHRC retrieval (use soft gate instead)')
 parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
                     help='Decay factor for CHRC memory importance (<=1.0)')
 parser.add_argument('--chrc_forget_threshold', type=float, default=0.0,

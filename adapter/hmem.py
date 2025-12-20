@@ -116,6 +116,8 @@ class HMem(nn.Module):
                 aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
                 use_refinement=getattr(args, 'chrc_use_refinement', True),
                 use_dual_key=getattr(args, 'chrc_use_dual_key', True),
+                trust_threshold=getattr(args, 'chrc_trust_threshold', 0.5),
+                gate_steepness=getattr(args, 'chrc_gate_steepness', 10.0),
                 min_similarity=getattr(args, 'chrc_min_similarity', 0.0),
                 forget_decay=getattr(args, 'chrc_forget_decay', 1.0),
                 forget_threshold=getattr(args, 'chrc_forget_threshold', 0.0),

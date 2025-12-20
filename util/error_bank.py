@@ -545,6 +545,8 @@ class CHRC(nn.Module):
         aggregation: str = 'softmax',
         use_refinement: bool = True,
         use_dual_key: bool = True,
+        trust_threshold: float = 0.5,
+        gate_steepness: float = 10.0,
         min_similarity: float = 0.0,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
@@ -560,6 +562,8 @@ class CHRC(nn.Module):
         self.aggregation = aggregation
         self.use_refinement = use_refinement
         self.use_dual_key = use_dual_key
+        self.trust_threshold = trust_threshold
+        self.gate_steepness = gate_steepness
         self.min_similarity = min_similarity
 
         # POGT Feature Encoder
@@ -623,6 +627,10 @@ class CHRC(nn.Module):
             nn.Linear(feature_dim // 2, 1),
             nn.Sigmoid()
         )
+
+    def _compute_similarity_gate(self, max_similarity: torch.Tensor) -> torch.Tensor:
+        """Soft gate based on retrieval similarity."""
+        return torch.sigmoid(self.gate_steepness * (max_similarity - self.trust_threshold))
 
     def encode_pogt(self, pogt: torch.Tensor) -> torch.Tensor:
         """
@@ -712,6 +720,10 @@ class CHRC(nn.Module):
         ], dim=-1)
         retrieval_quality = self.quality_estimator(quality_input)  # [batch, 1]
 
+        # Similarity-based soft gate
+        max_similarity = similarities.max(dim=-1, keepdim=True)[0]
+        similarity_gate = self._compute_similarity_gate(max_similarity)
+
         # Optional refinement
         if self.refiner is not None:
             refiner_input = torch.cat([
@@ -738,7 +750,7 @@ class CHRC(nn.Module):
 
         # Modulate confidence by retrieval quality and validity
         has_valid_retrieval = valid_mask.any(dim=-1, keepdim=True).float()
-        effective_confidence = confidence * retrieval_quality * has_valid_retrieval
+        effective_confidence = confidence * retrieval_quality * similarity_gate * has_valid_retrieval
 
         # Apply correction
         corrected = prediction + effective_confidence.unsqueeze(-1) * correction
@@ -753,6 +765,8 @@ class CHRC(nn.Module):
                 'correction': correction,
                 'confidence': confidence,
                 'retrieval_quality': retrieval_quality,
+                'max_similarity': max_similarity,
+                'similarity_gate': similarity_gate,
                 'effective_confidence': effective_confidence
             }
             return corrected, details

@@ -69,6 +69,8 @@ hyperparams = {
         'chrc_aggregation': 'softmax',
         'chrc_use_refinement': True,
         'chrc_use_dual_key': True,
+        'chrc_trust_threshold': 0.5,
+        'chrc_gate_steepness': 10.0,
         # POGT settings
         'pogt_ratio': 0.5,  # Use 50% of horizon as POGT
         'hmem_pogt_source': 'batch_x',
