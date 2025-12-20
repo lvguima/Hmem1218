@@ -114,6 +114,8 @@ parser.add_argument('--chrc_feature_dim', type=int, default=128, help='CHRC POGT
 parser.add_argument('--chrc_temperature', type=float, default=0.1, help='Temperature for CHRC aggregation')
 parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Aggregation method for CHRC')
 parser.add_argument('--chrc_use_refinement', type=str_to_bool, default=True, help='Use refinement network in CHRC')
+parser.add_argument('--chrc_use_dual_key', type=str_to_bool, default=True,
+                    help='Use dual-key (POGT + prediction) for CHRC retrieval')
 parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
                     help='Minimum absolute similarity for CHRC retrieval (abstain if below)')
 parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
@@ -125,9 +127,11 @@ parser.add_argument('--chrc_max_age', type=int, default=0,
 
 # H-Mem (General)
 parser.add_argument('--pogt_ratio', type=float, default=0.5, help='POGT ratio')
+parser.add_argument('--hmem_pogt_source', type=str, default='batch_x',
+                    help='POGT source for H-Mem: batch_x (causal) or batch_y (leaky)')
 parser.add_argument('--hmem_warmup_steps', type=int, default=100, help='SNMA warmup steps')
 parser.add_argument('--hmem_joint_training', type=str_to_bool, default=True, help='Enable joint SNMA+CHRC training')
-parser.add_argument('--use_snma', type=str_to_bool, default=True, help='Use SNMA (neural memory adapter)')
+parser.add_argument('--use_snma', type=str_to_bool, default=False, help='Use SNMA (neural memory adapter)')
 parser.add_argument('--use_chrc', type=str_to_bool, default=True, help='Use CHRC (retrieval corrector)')
 
 # data loader

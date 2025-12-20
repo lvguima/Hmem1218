@@ -46,8 +46,12 @@ class Exp_HMem(Exp_Online):
         self.pogt_ratio = getattr(args, 'pogt_ratio', 0.5)
         self.warmup_steps = getattr(args, 'hmem_warmup_steps', 100)
         self.joint_training = getattr(args, 'hmem_joint_training', True)
-        self.use_snma = getattr(args, 'use_snma', True)
+        self.use_snma = getattr(args, 'use_snma', False)
         self.use_chrc = getattr(args, 'use_chrc', True)
+
+        self.pogt_source = getattr(args, 'hmem_pogt_source', 'batch_x')
+        if self.pogt_source not in ('batch_x', 'batch_y'):
+            raise ValueError("hmem_pogt_source must be 'batch_x' or 'batch_y'")
 
         # Delayed update buffer
         # Stores (step, pogt, prediction) tuples waiting for ground truth
@@ -154,15 +158,15 @@ class Exp_HMem(Exp_Online):
 
     def _extract_pogt(
         self,
-        batch_y: torch.Tensor,
+        batch_seq: torch.Tensor,
         full_gt: bool = False
     ) -> torch.Tensor:
         """
         Extract POGT from batch data.
 
         Args:
-            batch_y: Ground truth data [batch, total_len, features]
-            full_gt: Whether batch_y contains full ground truth
+            batch_seq: Source sequence [batch, total_len, features]
+            full_gt: Whether batch_seq contains full ground truth
 
         Returns:
             POGT tensor [batch, pogt_len, features]
@@ -172,30 +176,30 @@ class Exp_HMem(Exp_Online):
 
         if full_gt:
             # Take the first pogt_len steps from full GT
-            if batch_y.size(1) >= pogt_len:
-                return batch_y[:, :pogt_len, :]
+            if batch_seq.size(1) >= pogt_len:
+                return batch_seq[:, :pogt_len, :]
             else:
                 # Pad if needed
                 padding = torch.zeros(
-                    batch_y.size(0),
-                    pogt_len - batch_y.size(1),
-                    batch_y.size(2),
-                    device=batch_y.device
+                    batch_seq.size(0),
+                    pogt_len - batch_seq.size(1),
+                    batch_seq.size(2),
+                    device=batch_seq.device
                 )
-                return torch.cat([batch_y, padding], dim=1)
+                return torch.cat([batch_seq, padding], dim=1)
         else:
             # Take the last pogt_len steps (most recent observations)
-            if batch_y.size(1) >= pogt_len:
-                return batch_y[:, -pogt_len:, :]
+            if batch_seq.size(1) >= pogt_len:
+                return batch_seq[:, -pogt_len:, :]
             else:
                 # Pad at beginning
                 padding = torch.zeros(
-                    batch_y.size(0),
-                    pogt_len - batch_y.size(1),
-                    batch_y.size(2),
-                    device=batch_y.device
+                    batch_seq.size(0),
+                    pogt_len - batch_seq.size(1),
+                    batch_seq.size(2),
+                    device=batch_seq.device
                 )
-                return torch.cat([padding, batch_y], dim=1)
+                return torch.cat([padding, batch_seq], dim=1)
 
     def _update_online(
         self,
@@ -230,7 +234,8 @@ class Exp_HMem(Exp_Online):
 
         # Extract POGT from observations
         # In online setting, we use recent observations as POGT
-        pogt = self._extract_pogt(batch_y, full_gt=False)
+        pogt_source = batch_x if self.pogt_source == 'batch_x' else batch_y
+        pogt = self._extract_pogt(pogt_source, full_gt=False)
 
         # Zero gradients
         optimizer.zero_grad()
@@ -336,7 +341,7 @@ class Exp_HMem(Exp_Online):
             error = ground_truth.to(stored_prediction.device) - stored_prediction
 
             # Store the error with the correct POGT in memory bank
-            model.chrc.store_error(stored_pogt, error)
+            model.chrc.store_error(stored_pogt, error, prediction=stored_prediction)
 
             # Update cold start flag
             if model._is_cold_start:
@@ -506,14 +511,15 @@ class Exp_HMem(Exp_Online):
                 losses.append(loss)
 
                 # Process delayed memory bank updates
-                _, batch_y, _, _ = recent_batch
+                recent_x, recent_y, _, _ = recent_batch
                 if len(self.pending_updates) > 0:
-                    self._process_delayed_updates(i, batch_y[:, -self.args.pred_len:, :])
+                    self._process_delayed_updates(i, recent_y[:, -self.args.pred_len:, :])
 
-                # Build POGT for prediction from observed recent data (avoid leakage)
-                recent_y = batch_y.float().to(self.device)
-                if recent_y.size(1) >= model.pogt_len:
-                    pogt_for_pred = self._extract_pogt(recent_y, full_gt=False)
+                # Build POGT for prediction from selected source (default: batch_x)
+                recent_x = recent_x.float().to(self.device)
+                recent_y = recent_y.float().to(self.device)
+                pogt_source = recent_x if self.pogt_source == 'batch_x' else recent_y
+                pogt_for_pred = self._extract_pogt(pogt_source, full_gt=False)
 
             # Make prediction for current window
             with torch.no_grad():

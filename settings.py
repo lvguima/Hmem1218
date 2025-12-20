@@ -68,14 +68,16 @@ hyperparams = {
         'chrc_temperature': 0.1,
         'chrc_aggregation': 'softmax',
         'chrc_use_refinement': True,
+        'chrc_use_dual_key': True,
         # POGT settings
         'pogt_ratio': 0.5,  # Use 50% of horizon as POGT
+        'hmem_pogt_source': 'batch_x',
         # Training settings
         'hmem_warmup_steps': 100,
         'hmem_joint_training': True,
         'weight_decay': 0.01,
         'freeze': True,  # Freeze backbone
-        'use_snma': True,
+        'use_snma': False,
         'use_chrc': True,
     },
 }

@@ -115,6 +115,7 @@ class HMem(nn.Module):
                 temperature=getattr(args, 'chrc_temperature', 0.1),
                 aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
                 use_refinement=getattr(args, 'chrc_use_refinement', True),
+                use_dual_key=getattr(args, 'chrc_use_dual_key', True),
                 min_similarity=getattr(args, 'chrc_min_similarity', 0.0),
                 forget_decay=getattr(args, 'chrc_forget_decay', 1.0),
                 forget_threshold=getattr(args, 'chrc_forget_threshold', 0.0),
@@ -131,7 +132,7 @@ class HMem(nn.Module):
         self._lora_ema_params: Dict[str, torch.Tensor] = {}
 
         # Flags for controlling behavior (read from args!)
-        self.flag_use_snma = getattr(args, 'use_snma', True)
+        self.flag_use_snma = getattr(args, 'use_snma', False)
         self.flag_use_chrc = self.use_chrc
         self.flag_store_errors = True
 
@@ -251,6 +252,7 @@ class HMem(nn.Module):
             self._clear_lora_params()
         else:
             adapted_pred = base_pred
+            outputs['memory_state'] = None
 
         outputs['adapted_prediction'] = adapted_pred
 
@@ -307,7 +309,7 @@ class HMem(nn.Module):
         error = ground_truth - self._last_prediction
 
         # Store in CHRC memory bank
-        self.chrc.store_error(self._last_pogt, error)
+        self.chrc.store_error(self._last_pogt, error, prediction=self._last_prediction)
 
         # Update cold start flag
         if self._is_cold_start:

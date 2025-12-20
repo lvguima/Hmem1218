@@ -105,6 +105,44 @@ class POGTFeatureEncoder(nn.Module):
         return features
 
 
+class PredictionEncoder(nn.Module):
+    """
+    Encodes model predictions into feature vectors for contextual retrieval.
+
+    Uses a lightweight MLP over the flattened prediction horizon.
+    """
+
+    def __init__(self, horizon: int, num_features: int, feature_dim: int):
+        super().__init__()
+        self.horizon = horizon
+        self.num_features = num_features
+        self.feature_dim = feature_dim
+
+        input_dim = horizon * num_features
+        hidden_dim = feature_dim * 2
+
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, feature_dim),
+        )
+
+    def forward(self, prediction: torch.Tensor) -> torch.Tensor:
+        """
+        Encode prediction into feature vector.
+
+        Args:
+            prediction: [batch, horizon, num_features]
+
+        Returns:
+            Feature vector [batch, feature_dim]
+        """
+        if prediction.dim() == 2:
+            prediction = prediction.unsqueeze(1)
+        return self.encoder(prediction.flatten(1))
+
+
 class ErrorMemoryBank(nn.Module):
     """
     Non-parametric memory bank storing POGT-Error pairs.
@@ -162,6 +200,8 @@ class ErrorMemoryBank(nn.Module):
         self.register_buffer('write_pointer', torch.tensor(0, dtype=torch.long))
         self.register_buffer('num_entries', torch.tensor(0, dtype=torch.long))
         self.register_buffer('global_step', torch.tensor(0, dtype=torch.long))
+        self._retrieve_calls = 0
+        self._log_every = 100
 
     @property
     def is_empty(self) -> bool:
@@ -367,6 +407,13 @@ class ErrorMemoryBank(nn.Module):
         # Create validity mask
         valid_mask = top_sims >= min_similarity
 
+        self._retrieve_calls += 1
+        if min_similarity > 0 and self._retrieve_calls % self._log_every == 0:
+            valid_ratio = valid_mask.float().mean().item()
+            print(f"[CHRC] similarities: min={top_sims.min().item():.3f}, "
+                  f"max={top_sims.max().item():.3f}, mean={top_sims.mean().item():.3f}, "
+                  f"valid_ratio={valid_ratio:.3f}")
+
         # Pad if necessary
         if actual_k < top_k:
             pad_size = top_k - actual_k
@@ -497,6 +544,7 @@ class CHRC(nn.Module):
         temperature: float = 0.1,
         aggregation: str = 'softmax',
         use_refinement: bool = True,
+        use_dual_key: bool = True,
         min_similarity: float = 0.0,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
@@ -511,6 +559,7 @@ class CHRC(nn.Module):
         self.top_k = top_k
         self.aggregation = aggregation
         self.use_refinement = use_refinement
+        self.use_dual_key = use_dual_key
         self.min_similarity = min_similarity
 
         # POGT Feature Encoder
@@ -519,6 +568,18 @@ class CHRC(nn.Module):
             feature_dim=feature_dim,
             pooling='mean'
         )
+
+        # Prediction Feature Encoder (for dual-key retrieval)
+        if self.use_dual_key:
+            self.pred_encoder = PredictionEncoder(
+                horizon=horizon,
+                num_features=num_features,
+                feature_dim=feature_dim
+            )
+            self.key_fusion = nn.Linear(feature_dim * 2, feature_dim)
+        else:
+            self.pred_encoder = None
+            self.key_fusion = None
 
         # Error Memory Bank
         self.memory_bank = ErrorMemoryBank(
@@ -575,6 +636,31 @@ class CHRC(nn.Module):
         """
         return self.pogt_encoder(pogt)
 
+    def _compute_query_key(
+        self,
+        prediction: Optional[torch.Tensor],
+        pogt: torch.Tensor,
+        pogt_features: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute retrieval query key.
+
+        Returns:
+            query_key: [batch, feature_dim]
+            pogt_features: [batch, feature_dim]
+        """
+        if pogt_features is None:
+            pogt_features = self.encode_pogt(pogt)
+
+        if self.use_dual_key and prediction is not None:
+            pred_features = self.pred_encoder(prediction)
+            fused = self.key_fusion(torch.cat([pogt_features, pred_features], dim=-1))
+            query_key = F.normalize(fused, p=2, dim=-1)
+        else:
+            query_key = pogt_features
+
+        return query_key, pogt_features
+
     def forward(
         self,
         prediction: torch.Tensor,
@@ -597,13 +683,16 @@ class CHRC(nn.Module):
         batch_size = prediction.size(0)
         device = prediction.device
 
-        # Encode POGT (or reuse shared features if provided)
-        if pogt_features is None:
-            pogt_features = self.encode_pogt(pogt)  # [batch, feature_dim]
+        # Encode POGT (or reuse shared features) and build retrieval key
+        query_key, pogt_features = self._compute_query_key(
+            prediction=prediction,
+            pogt=pogt,
+            pogt_features=pogt_features
+        )
 
         # Retrieve from memory bank
         retrieved_errors, similarities, valid_mask = self.memory_bank.retrieve(
-            pogt_features,
+            query_key,
             top_k=self.top_k,
             min_similarity=self.min_similarity
         )
@@ -674,6 +763,7 @@ class CHRC(nn.Module):
         self,
         pogt: torch.Tensor,
         error: torch.Tensor,
+        prediction: Optional[torch.Tensor] = None,
         importance: Optional[torch.Tensor] = None
     ):
         """
@@ -684,19 +774,27 @@ class CHRC(nn.Module):
         Args:
             pogt: POGT at prediction time [batch, pogt_len, num_features]
             error: Full horizon error [batch, horizon, num_features]
+            prediction: Prediction at the same time [batch, horizon, num_features]
             importance: Optional importance scores [batch]
         """
-        # Encode POGT
+        # Encode POGT and compute storage key
         with torch.no_grad():
-            pogt_features = self.encode_pogt(pogt)
+            query_key, _ = self._compute_query_key(
+                prediction=prediction,
+                pogt=pogt,
+                pogt_features=None
+            )
 
         # Store in memory bank
-        self.memory_bank.store(pogt_features, error, importance)
+        self.memory_bank.store(query_key, error, importance)
 
     def get_statistics(self) -> Dict[str, float]:
         """Get CHRC statistics."""
         stats = self.memory_bank.get_statistics()
         stats['encoder_params'] = sum(p.numel() for p in self.pogt_encoder.parameters())
+        if self.use_dual_key and self.pred_encoder is not None:
+            stats['pred_encoder_params'] = sum(p.numel() for p in self.pred_encoder.parameters())
+            stats['key_fusion_params'] = sum(p.numel() for p in self.key_fusion.parameters())
         stats['gate_params'] = sum(p.numel() for p in self.confidence_gate.parameters())
         if self.refiner is not None:
             stats['refiner_params'] = sum(p.numel() for p in self.refiner.parameters())
