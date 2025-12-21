@@ -601,6 +601,10 @@ class CHRC(nn.Module):
         trajectory_bias: float = 0.0,
         use_error_decomp: bool = False,
         error_ema_decay: float = 0.9,
+        use_horizon_mask: bool = False,
+        horizon_mask_mode: str = 'exp',
+        horizon_mask_decay: float = 0.98,
+        horizon_mask_min: float = 0.2,
         min_similarity: float = 0.0,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
@@ -622,6 +626,10 @@ class CHRC(nn.Module):
         self.trajectory_bias = trajectory_bias
         self.use_error_decomp = use_error_decomp
         self.error_ema_decay = error_ema_decay
+        self.use_horizon_mask = use_horizon_mask
+        self.horizon_mask_mode = horizon_mask_mode
+        self.horizon_mask_decay = horizon_mask_decay
+        self.horizon_mask_min = horizon_mask_min
         self.min_similarity = min_similarity
         self.last_topk_indices: Optional[torch.Tensor] = None
         self.error_ema: Optional[torch.Tensor] = None
@@ -658,6 +666,24 @@ class CHRC(nn.Module):
             self.key_fusion = nn.Linear(feature_dim * fusion_components, feature_dim)
         else:
             self.key_fusion = None
+
+        # Horizon-aware correction mask
+        self.horizon_mask: Optional[torch.Tensor] = None
+        if self.use_horizon_mask:
+            if self.horizon_mask_mode == 'learned':
+                self.horizon_mask = nn.Parameter(torch.ones(horizon))
+            else:
+                if self.horizon_mask_mode not in ('exp', 'linear'):
+                    raise ValueError("horizon_mask_mode must be 'exp', 'linear', or 'learned'")
+                steps = torch.arange(horizon, dtype=torch.float)
+                if self.horizon_mask_mode == 'linear':
+                    denom = max(horizon - 1, 1)
+                    mask = 1.0 - (steps / denom)
+                else:
+                    mask = torch.pow(self.horizon_mask_decay, steps)
+                if self.horizon_mask_min > 0:
+                    mask = torch.clamp(mask, min=self.horizon_mask_min)
+                self.register_buffer('horizon_mask', mask)
 
         # Error Memory Bank
         self.memory_bank = ErrorMemoryBank(
@@ -705,6 +731,16 @@ class CHRC(nn.Module):
     def _compute_similarity_gate(self, max_similarity: torch.Tensor) -> torch.Tensor:
         """Soft gate based on retrieval similarity."""
         return torch.sigmoid(self.gate_steepness * (max_similarity - self.trust_threshold))
+
+    def _get_horizon_mask(self, device: torch.device, dtype: torch.dtype) -> Optional[torch.Tensor]:
+        """Return broadcastable horizon mask [1, H, 1] if enabled."""
+        if not self.use_horizon_mask or self.horizon_mask is None:
+            return None
+        if isinstance(self.horizon_mask, nn.Parameter):
+            mask = torch.sigmoid(self.horizon_mask)
+        else:
+            mask = self.horizon_mask
+        return mask.to(device=device, dtype=dtype).view(1, -1, 1)
 
     def encode_pogt(self, pogt: torch.Tensor) -> torch.Tensor:
         """
@@ -834,6 +870,11 @@ class CHRC(nn.Module):
         else:
             correction = aggregated_error
 
+        # Apply horizon-aware mask
+        horizon_mask = self._get_horizon_mask(prediction.device, prediction.dtype)
+        if horizon_mask is not None:
+            correction = correction * horizon_mask
+
         # Compute confidence gate with compact stats
         pred_mean = prediction.abs().mean(dim=(1, 2))
         pred_std = prediction.std(dim=(1, 2), unbiased=False)
@@ -926,6 +967,8 @@ class CHRC(nn.Module):
             stats['ctx_encoder_params'] = sum(p.numel() for p in self.ctx_encoder.parameters())
         if self.key_fusion is not None:
             stats['key_fusion_params'] = sum(p.numel() for p in self.key_fusion.parameters())
+        if isinstance(self.horizon_mask, nn.Parameter):
+            stats['horizon_mask_params'] = self.horizon_mask.numel()
         stats['gate_params'] = sum(p.numel() for p in self.confidence_gate.parameters())
         if self.refiner is not None:
             stats['refiner_params'] = sum(p.numel() for p in self.refiner.parameters())

@@ -160,3 +160,27 @@ ETTm1
 Weather
 - weighted_mean: MSE=1.577724  MAE=0.716426  RMSE=1.256075
 - adaptive: MSE=1.944069  MAE=0.826229  RMSE=1.394299
+
+---
+
+## P5 Results (Error Decomposition)
+
+ETTm1
+- use_error_decomp=False: MSE=0.758807  MAE=0.556801  RMSE=0.871096
+- use_error_decomp=True:  MSE=0.758807  MAE=0.556801  RMSE=0.871096
+
+Weather
+- use_error_decomp=False: MSE=1.957755  MAE=0.832740  RMSE=1.399198
+- use_error_decomp=True:  MSE=1.957755  MAE=0.832740  RMSE=1.399198
+
+---
+
+## P6 Results (Context Key)
+
+ETTm1
+- use_context_key=False: MSE=0.772021  MAE=0.559702  RMSE=0.878647
+- use_context_key=True:  MSE=0.771484  MAE=0.559225  RMSE=0.878341
+
+Weather
+- use_context_key=False: MSE=1.944069  MAE=0.826229  RMSE=1.394299
+- use_context_key=True:  MSE=1.944814  MAE=0.827698  RMSE=1.394560

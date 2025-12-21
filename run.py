@@ -130,6 +130,14 @@ parser.add_argument('--chrc_use_error_decomp', type=str_to_bool, default=False,
                     help='Store EMA-smoothed errors instead of raw errors')
 parser.add_argument('--chrc_error_ema_decay', type=float, default=0.9,
                     help='EMA decay for CHRC error decomposition')
+parser.add_argument('--chrc_use_horizon_mask', type=str_to_bool, default=False,
+                    help='Apply horizon-aware correction mask')
+parser.add_argument('--chrc_horizon_mask_mode', type=str, default='exp',
+                    help='Horizon mask mode: exp, linear, or learned')
+parser.add_argument('--chrc_horizon_mask_decay', type=float, default=0.98,
+                    help='Decay factor for exp horizon mask')
+parser.add_argument('--chrc_horizon_mask_min', type=float, default=0.2,
+                    help='Minimum weight for horizon mask')
 parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
                     help='Deprecated: minimum absolute similarity for CHRC retrieval (use soft gate instead)')
 parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
