@@ -305,11 +305,15 @@ class Exp_HMem(Exp_Online):
 
         # Store for delayed memory bank update
         if model.flag_store_errors:
+            bucket_id = None
+            if isinstance(model.chrc, nn.ModuleList) and hasattr(model, '_compute_bucket_id'):
+                bucket_id = model._compute_bucket_id(batch_x_mark)
             self.pending_updates.append({
                 'step': self._current_step,
                 'pogt': pogt.detach(),
                 'prediction': prediction.detach(),
                 'context': context.detach() if context is not None else None,
+                'bucket_id': bucket_id,
             })
 
         return loss.item()
@@ -347,7 +351,14 @@ class Exp_HMem(Exp_Online):
             error = ground_truth.to(stored_prediction.device) - stored_prediction
 
             # Store the error with the correct POGT in memory bank
-            model.chrc.store_error(
+            chrc_module = model.chrc
+            if isinstance(model.chrc, nn.ModuleList) and hasattr(model, '_get_chrc_for_bucket'):
+                chrc_module = model._get_chrc_for_bucket(update.get('bucket_id'))
+            if chrc_module is None:
+                self.pending_updates.remove(update)
+                continue
+
+            chrc_module.store_error(
                 stored_pogt,
                 error,
                 prediction=stored_prediction,
@@ -359,6 +370,13 @@ class Exp_HMem(Exp_Online):
                 model._is_cold_start = torch.tensor(False)
 
             self.pending_updates.remove(update)
+
+    def _get_chrc_mem_size(self, model: nn.Module) -> int:
+        if not self.use_chrc or model.chrc is None:
+            return 0
+        if isinstance(model.chrc, nn.ModuleList):
+            return sum(chrc.memory_bank.current_size for chrc in model.chrc)
+        return model.chrc.memory_bank.current_size
 
     def update_valid(self, valid_data=None):
         """
@@ -408,7 +426,7 @@ class Exp_HMem(Exp_Online):
 
             if (i + 1) % 100 == 0: # Update postfix every 100 steps
                 avg_loss = np.mean(warmup_losses[-100:]) if warmup_losses else 0
-                mem_size = self._model.chrc.memory_bank.current_size if self.use_chrc else 0
+                mem_size = self._get_chrc_mem_size(self._model.module if hasattr(self._model, 'module') else self._model)
                 warmup_pbar.set_postfix(
                     step=i + 1,
                     loss=f"{avg_loss:.3f}",
@@ -416,8 +434,8 @@ class Exp_HMem(Exp_Online):
                 )
 
         if self.args.local_rank <= 0:
-            print(f"[H-Mem] Validation warmup complete. Memory bank size: "
-                  f"{self._model.chrc.memory_bank.current_size if self.use_chrc else 0}")
+            mem_size = self._get_chrc_mem_size(self._model.module if hasattr(self._model, 'module') else self._model)
+            print(f"[H-Mem] Validation warmup complete. Memory bank size: {mem_size}")
 
 
     def online(
@@ -583,8 +601,16 @@ class Exp_HMem(Exp_Online):
             print(f"  MSE: {mse:.6f} | MAE: {mae:.6f} | RMSE: {rmse:.6f}")
             if self.use_chrc and hasattr(model, 'chrc') and model.chrc is not None:
                 stats = model.get_statistics()
-                print(f"  Memory Bank: {stats['memory_bank']['num_entries']} entries, "
-                      f"{stats['memory_bank']['utilization']*100:.1f}% full")
+                memory_stats = stats.get('memory_bank')
+                if isinstance(memory_stats, list):
+                    total_entries = sum(s.get('num_entries', 0) for s in memory_stats)
+                    total_capacity = sum(s.get('capacity', 0) for s in memory_stats)
+                    utilization = (total_entries / total_capacity) if total_capacity > 0 else 0.0
+                else:
+                    total_entries = memory_stats.get('num_entries', 0)
+                    total_capacity = memory_stats.get('capacity', 0)
+                    utilization = memory_stats.get('utilization', 0.0)
+                print(f"  Memory Bank: {total_entries} entries, {utilization*100:.1f}% full")
 
         # Return format consistent with Exp_Online.online()
         return mse, mae, online_data
