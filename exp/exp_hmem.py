@@ -236,6 +236,10 @@ class Exp_HMem(Exp_Online):
         # In online setting, we use recent observations as POGT
         pogt_source = batch_x if self.pogt_source == 'batch_x' else batch_y
         pogt = self._extract_pogt(pogt_source, full_gt=False)
+        context = None
+        if model.chrc is not None and getattr(model, 'chrc_use_context_key', False):
+            context_len = min(getattr(model, 'chrc_context_len', model.pogt_len), batch_x.size(1))
+            context = batch_x[:, -context_len:, :]
 
         # Zero gradients
         optimizer.zero_grad()
@@ -305,6 +309,7 @@ class Exp_HMem(Exp_Online):
                 'step': self._current_step,
                 'pogt': pogt.detach(),
                 'prediction': prediction.detach(),
+                'context': context.detach() if context is not None else None,
             })
 
         return loss.item()
@@ -336,12 +341,18 @@ class Exp_HMem(Exp_Online):
             # Use the stored POGT and prediction from the update
             stored_pogt = update['pogt']
             stored_prediction = update['prediction']
+            stored_context = update.get('context')
 
             # Compute error using the stored prediction
             error = ground_truth.to(stored_prediction.device) - stored_prediction
 
             # Store the error with the correct POGT in memory bank
-            model.chrc.store_error(stored_pogt, error, prediction=stored_prediction)
+            model.chrc.store_error(
+                stored_pogt,
+                error,
+                prediction=stored_prediction,
+                context=stored_context
+            )
 
             # Update cold start flag
             if model._is_cold_start:

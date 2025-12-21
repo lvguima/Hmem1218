@@ -595,6 +595,7 @@ class CHRC(nn.Module):
         aggregation: str = 'softmax',
         use_refinement: bool = True,
         use_dual_key: bool = True,
+        use_context_key: bool = False,
         trust_threshold: float = 0.5,
         gate_steepness: float = 10.0,
         trajectory_bias: float = 0.0,
@@ -615,6 +616,7 @@ class CHRC(nn.Module):
         self.aggregation = aggregation
         self.use_refinement = use_refinement
         self.use_dual_key = use_dual_key
+        self.use_context_key = use_context_key
         self.trust_threshold = trust_threshold
         self.gate_steepness = gate_steepness
         self.trajectory_bias = trajectory_bias
@@ -631,16 +633,30 @@ class CHRC(nn.Module):
             pooling='mean'
         )
 
-        # Prediction Feature Encoder (for dual-key retrieval)
+        # Feature encoders for retrieval keys
+        self.pred_encoder = None
+        self.ctx_encoder = None
+        fusion_components = 1  # pogt
+
         if self.use_dual_key:
             self.pred_encoder = PredictionEncoder(
                 horizon=horizon,
                 num_features=num_features,
                 feature_dim=feature_dim
             )
-            self.key_fusion = nn.Linear(feature_dim * 2, feature_dim)
+            fusion_components += 1
+
+        if self.use_context_key:
+            self.ctx_encoder = POGTFeatureEncoder(
+                input_dim=num_features,
+                feature_dim=feature_dim,
+                pooling='mean'
+            )
+            fusion_components += 1
+
+        if fusion_components > 1:
+            self.key_fusion = nn.Linear(feature_dim * fusion_components, feature_dim)
         else:
-            self.pred_encoder = None
             self.key_fusion = None
 
         # Error Memory Bank
@@ -706,6 +722,7 @@ class CHRC(nn.Module):
         self,
         prediction: Optional[torch.Tensor],
         pogt: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
         pogt_features: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -718,12 +735,21 @@ class CHRC(nn.Module):
         if pogt_features is None:
             pogt_features = self.encode_pogt(pogt)
 
-        if self.use_dual_key and prediction is not None:
+        components = [pogt_features]
+
+        if self.use_dual_key and prediction is not None and self.pred_encoder is not None:
             pred_features = self.pred_encoder(prediction)
-            fused = self.key_fusion(torch.cat([pogt_features, pred_features], dim=-1))
-            query_key = F.normalize(fused, p=2, dim=-1)
+            components.append(pred_features)
+
+        if self.use_context_key and context is not None and self.ctx_encoder is not None:
+            ctx_features = self.ctx_encoder(context)
+            components.append(ctx_features)
+
+        if len(components) == 1:
+            query_key = components[0]
         else:
-            query_key = pogt_features
+            fused = self.key_fusion(torch.cat(components, dim=-1))
+            query_key = F.normalize(fused, p=2, dim=-1)
 
         return query_key, pogt_features
 
@@ -731,6 +757,7 @@ class CHRC(nn.Module):
         self,
         prediction: torch.Tensor,
         pogt: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
         pogt_features: Optional[torch.Tensor] = None,
         return_details: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict]]:
@@ -753,6 +780,7 @@ class CHRC(nn.Module):
         query_key, pogt_features = self._compute_query_key(
             prediction=prediction,
             pogt=pogt,
+            context=context,
             pogt_features=pogt_features
         )
 
@@ -845,6 +873,7 @@ class CHRC(nn.Module):
         pogt: torch.Tensor,
         error: torch.Tensor,
         prediction: Optional[torch.Tensor] = None,
+        context: Optional[torch.Tensor] = None,
         importance: Optional[torch.Tensor] = None
     ):
         """
@@ -863,6 +892,7 @@ class CHRC(nn.Module):
             query_key, _ = self._compute_query_key(
                 prediction=prediction,
                 pogt=pogt,
+                context=context,
                 pogt_features=None
             )
 
@@ -890,8 +920,11 @@ class CHRC(nn.Module):
         """Get CHRC statistics."""
         stats = self.memory_bank.get_statistics()
         stats['encoder_params'] = sum(p.numel() for p in self.pogt_encoder.parameters())
-        if self.use_dual_key and self.pred_encoder is not None:
+        if self.pred_encoder is not None:
             stats['pred_encoder_params'] = sum(p.numel() for p in self.pred_encoder.parameters())
+        if self.ctx_encoder is not None:
+            stats['ctx_encoder_params'] = sum(p.numel() for p in self.ctx_encoder.parameters())
+        if self.key_fusion is not None:
             stats['key_fusion_params'] = sum(p.numel() for p in self.key_fusion.parameters())
         stats['gate_params'] = sum(p.numel() for p in self.confidence_gate.parameters())
         if self.refiner is not None:

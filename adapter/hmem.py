@@ -67,9 +67,13 @@ class HMem(nn.Module):
         self.share_pogt = getattr(args, 'hmem_share_pogt', False)
         self.use_chrc = getattr(args, 'use_chrc', True)
         self.freeze_backbone = getattr(args, 'freeze', True)
+        self.chrc_use_context_key = getattr(args, 'chrc_use_context_key', False)
+        self.chrc_context_len = getattr(args, 'chrc_context_len', 0)
 
         # Calculate POGT length
         self.pogt_len = max(1, int(self.pred_len * self.pogt_ratio))
+        if self.chrc_context_len <= 0:
+            self.chrc_context_len = self.pogt_len
 
         # If sharing POGT representations, align CHRC feature dim with SNMA encoding dim
         if self.share_pogt and self.chrc_feature_dim != self.memory_dim:
@@ -116,6 +120,7 @@ class HMem(nn.Module):
                 aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
                 use_refinement=getattr(args, 'chrc_use_refinement', True),
                 use_dual_key=getattr(args, 'chrc_use_dual_key', True),
+                use_context_key=self.chrc_use_context_key,
                 trust_threshold=getattr(args, 'chrc_trust_threshold', 0.5),
                 gate_steepness=getattr(args, 'chrc_gate_steepness', 10.0),
                 trajectory_bias=getattr(args, 'chrc_trajectory_bias', 0.2),
@@ -133,6 +138,7 @@ class HMem(nn.Module):
         self.register_buffer('_is_cold_start', torch.tensor(True))
         self._last_pogt: Optional[torch.Tensor] = None
         self._last_prediction: Optional[torch.Tensor] = None
+        self._last_context: Optional[torch.Tensor] = None
         self._mode = 'train'  # 'train', 'eval', 'online'
         self._lora_ema_params: Dict[str, torch.Tensor] = {}
 
@@ -262,6 +268,11 @@ class HMem(nn.Module):
         outputs['adapted_prediction'] = adapted_pred
 
         # Step 4: CHRC - Retrieve and apply historical error correction
+        context = None
+        if self.flag_use_chrc and self.chrc is not None and self.chrc_use_context_key:
+            context_len = min(self.chrc_context_len, x_enc.size(1))
+            context = x_enc[:, -context_len:, :]
+
         if self.flag_use_chrc and self.chrc is not None:
             if self._is_cold_start or self.chrc.memory_bank.is_empty:
                 # Cold start: no historical data
@@ -271,7 +282,11 @@ class HMem(nn.Module):
             else:
                 # Apply CHRC correction
                 corrected_pred, chrc_details = self.chrc(
-                    adapted_pred, pogt, pogt_features=pogt_features, return_details=True
+                    adapted_pred,
+                    pogt,
+                    context=context,
+                    pogt_features=pogt_features,
+                    return_details=True
                 )
 
                 outputs['correction'] = chrc_details['correction']
@@ -289,6 +304,7 @@ class HMem(nn.Module):
         if self.flag_store_errors and pogt is not None:
             self._last_pogt = pogt.detach()
             self._last_prediction = corrected_pred.detach()
+            self._last_context = context.detach() if context is not None else None
 
         if return_components:
             return outputs
@@ -314,7 +330,12 @@ class HMem(nn.Module):
         error = ground_truth - self._last_prediction
 
         # Store in CHRC memory bank
-        self.chrc.store_error(self._last_pogt, error, prediction=self._last_prediction)
+        self.chrc.store_error(
+            self._last_pogt,
+            error,
+            prediction=self._last_prediction,
+            context=self._last_context
+        )
 
         # Update cold start flag
         if self._is_cold_start:
@@ -323,6 +344,7 @@ class HMem(nn.Module):
         # Clear cache
         self._last_pogt = None
         self._last_prediction = None
+        self._last_context = None
 
     def reset_memory(self, batch_size: int = 1):
         """Reset all memory states (for new sequence/dataset)."""
@@ -332,6 +354,7 @@ class HMem(nn.Module):
         self._is_cold_start = torch.tensor(True)
         self._last_pogt = None
         self._last_prediction = None
+        self._last_context = None
         self._lora_ema_params = {}
 
     def freeze_snma(self, freeze: bool = True):

@@ -122,6 +122,10 @@ parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
                     help='Steepness for CHRC soft gating')
 parser.add_argument('--chrc_trajectory_bias', type=float, default=0.2,
                     help='Trajectory bias strength for CHRC retrieval (0 disables)')
+parser.add_argument('--chrc_use_context_key', type=str_to_bool, default=False,
+                    help='Use context key from input history for CHRC retrieval')
+parser.add_argument('--chrc_context_len', type=int, default=0,
+                    help='Context length for CHRC context key (0 uses pogt_len)')
 parser.add_argument('--chrc_use_error_decomp', type=str_to_bool, default=False,
                     help='Store EMA-smoothed errors instead of raw errors')
 parser.add_argument('--chrc_error_ema_decay', type=float, default=0.9,

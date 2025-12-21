@@ -148,3 +148,15 @@ ETTm1
 Weather
 - bias=0.0: MSE=1.919845  MAE=0.818350  RMSE=1.385585
 - bias=0.2: MSE=1.924322  MAE=0.819975  RMSE=1.387199
+
+---
+
+## P4 Results (Adaptive Aggregation)
+
+ETTm1
+- softmax: MSE=0.755514  MAE=0.555819  RMSE=0.869203
+- adaptive: MSE=0.772021  MAE=0.559702  RMSE=0.878647
+
+Weather
+- weighted_mean: MSE=1.577724  MAE=0.716426  RMSE=1.256075
+- adaptive: MSE=1.944069  MAE=0.826229  RMSE=1.394299
