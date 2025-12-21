@@ -119,6 +119,8 @@ class HMem(nn.Module):
                 trust_threshold=getattr(args, 'chrc_trust_threshold', 0.5),
                 gate_steepness=getattr(args, 'chrc_gate_steepness', 10.0),
                 trajectory_bias=getattr(args, 'chrc_trajectory_bias', 0.2),
+                use_error_decomp=getattr(args, 'chrc_use_error_decomp', False),
+                error_ema_decay=getattr(args, 'chrc_error_ema_decay', 0.9),
                 min_similarity=getattr(args, 'chrc_min_similarity', 0.0),
                 forget_decay=getattr(args, 'chrc_forget_decay', 1.0),
                 forget_threshold=getattr(args, 'chrc_forget_threshold', 0.0),

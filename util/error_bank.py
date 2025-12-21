@@ -598,6 +598,8 @@ class CHRC(nn.Module):
         trust_threshold: float = 0.5,
         gate_steepness: float = 10.0,
         trajectory_bias: float = 0.0,
+        use_error_decomp: bool = False,
+        error_ema_decay: float = 0.9,
         min_similarity: float = 0.0,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
@@ -616,8 +618,11 @@ class CHRC(nn.Module):
         self.trust_threshold = trust_threshold
         self.gate_steepness = gate_steepness
         self.trajectory_bias = trajectory_bias
+        self.use_error_decomp = use_error_decomp
+        self.error_ema_decay = error_ema_decay
         self.min_similarity = min_similarity
         self.last_topk_indices: Optional[torch.Tensor] = None
+        self.error_ema: Optional[torch.Tensor] = None
 
         # POGT Feature Encoder
         self.pogt_encoder = POGTFeatureEncoder(
@@ -861,8 +866,25 @@ class CHRC(nn.Module):
                 pogt_features=None
             )
 
+        error_to_store = error
+        if self.use_error_decomp:
+            with torch.no_grad():
+                if (
+                    self.error_ema is None or
+                    self.error_ema.shape != error.shape or
+                    self.error_ema.device != error.device
+                ):
+                    systematic = error
+                else:
+                    systematic = (
+                        self.error_ema_decay * self.error_ema +
+                        (1 - self.error_ema_decay) * error
+                    )
+                self.error_ema = systematic.detach()
+                error_to_store = systematic
+
         # Store in memory bank
-        self.memory_bank.store(query_key, error, importance)
+        self.memory_bank.store(query_key, error_to_store, importance)
 
     def get_statistics(self) -> Dict[str, float]:
         """Get CHRC statistics."""
@@ -880,6 +902,7 @@ class CHRC(nn.Module):
         """Reset CHRC state (clear memory bank)."""
         self.memory_bank.clear()
         self.reset_trajectory()
+        self.error_ema = None
 
     def reset_trajectory(self):
         """Reset trajectory state (call at sequence boundaries)."""

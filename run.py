@@ -122,6 +122,10 @@ parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
                     help='Steepness for CHRC soft gating')
 parser.add_argument('--chrc_trajectory_bias', type=float, default=0.2,
                     help='Trajectory bias strength for CHRC retrieval (0 disables)')
+parser.add_argument('--chrc_use_error_decomp', type=str_to_bool, default=False,
+                    help='Store EMA-smoothed errors instead of raw errors')
+parser.add_argument('--chrc_error_ema_decay', type=float, default=0.9,
+                    help='EMA decay for CHRC error decomposition')
 parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
                     help='Deprecated: minimum absolute similarity for CHRC retrieval (use soft gate instead)')
 parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
