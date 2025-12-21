@@ -8,7 +8,7 @@ This module provides:
 Key features:
 - Fixed capacity with intelligent eviction (LRU + importance + temporal decay)
 - Efficient retrieval using cosine similarity
-- Adaptive aggregation of retrieved errors
+- Aggregation of retrieved errors
 - Confidence-gated correction
 
 Author: H-Mem Implementation
@@ -103,44 +103,6 @@ class POGTFeatureEncoder(nn.Module):
         features = self.projector(h_pooled)
 
         return features
-
-
-class PredictionEncoder(nn.Module):
-    """
-    Encodes model predictions into feature vectors for contextual retrieval.
-
-    Uses a lightweight MLP over the flattened prediction horizon.
-    """
-
-    def __init__(self, horizon: int, num_features: int, feature_dim: int):
-        super().__init__()
-        self.horizon = horizon
-        self.num_features = num_features
-        self.feature_dim = feature_dim
-
-        input_dim = horizon * num_features
-        hidden_dim = feature_dim * 2
-
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, feature_dim),
-        )
-
-    def forward(self, prediction: torch.Tensor) -> torch.Tensor:
-        """
-        Encode prediction into feature vector.
-
-        Args:
-            prediction: [batch, horizon, num_features]
-
-        Returns:
-            Feature vector [batch, feature_dim]
-        """
-        if prediction.dim() == 2:
-            prediction = prediction.unsqueeze(1)
-        return self.encoder(prediction.flatten(1))
 
 
 class ErrorMemoryBank(nn.Module):
@@ -345,14 +307,8 @@ class ErrorMemoryBank(nn.Module):
         self,
         query: torch.Tensor,
         top_k: int = 5,
-        min_similarity: float = 0.0,
-        prev_topk_indices: Optional[torch.Tensor] = None,
-        trajectory_bias: float = 0.0,
-        return_indices: bool = False
-    ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    ]:
+        min_similarity: float = 0.0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Retrieve top-K similar error patterns.
 
@@ -360,15 +316,11 @@ class ErrorMemoryBank(nn.Module):
             query: Query POGT features [batch, feature_dim]
             top_k: Number of entries to retrieve
             min_similarity: Minimum similarity threshold
-            prev_topk_indices: Previous top-K indices for trajectory bias
-            trajectory_bias: Bias strength for successor indices
-            return_indices: Whether to return top-K indices
 
         Returns:
             retrieved_values: [batch, top_k, horizon, num_features]
             similarities: [batch, top_k]
             valid_mask: [batch, top_k] boolean mask for valid retrievals
-            top_indices: (optional) [batch, top_k]
         """
         batch_size = query.size(0)
         n = self.current_size
@@ -376,14 +328,11 @@ class ErrorMemoryBank(nn.Module):
 
         # Handle empty or insufficient memory
         if n < self.min_entries_for_retrieval:
-            empty_indices = torch.full((batch_size, top_k), -1, device=device, dtype=torch.long)
             results = (
                 torch.zeros(batch_size, top_k, self.horizon, self.num_features, device=device),
                 torch.zeros(batch_size, top_k, device=device),
                 torch.zeros(batch_size, top_k, dtype=torch.bool, device=device)
             )
-            if return_indices:
-                return results + (empty_indices,)
             return results
 
         # Get valid entries
@@ -401,20 +350,6 @@ class ErrorMemoryBank(nn.Module):
         age = (self.global_step - valid_timestamps).float()
         decay = torch.pow(self.decay_factor, age)  # [n]
         similarities = similarities * decay.unsqueeze(0)  # [batch, n]
-
-        # Apply trajectory bias for successor indices
-        if trajectory_bias > 0 and prev_topk_indices is not None:
-            prev_topk_indices = prev_topk_indices.to(device)
-            successor_mask = torch.zeros_like(similarities)
-            for b in range(batch_size):
-                for idx in prev_topk_indices[b]:
-                    idx_val = int(idx.item())
-                    if idx_val < 0:
-                        continue
-                    next_idx = idx_val + 1
-                    if next_idx < n:
-                        successor_mask[b, next_idx] = trajectory_bias
-            similarities = similarities + successor_mask
 
         # Get top-K
         actual_k = min(top_k, n)
@@ -448,11 +383,6 @@ class ErrorMemoryBank(nn.Module):
             retrieved = F.pad(retrieved, (0, 0, 0, 0, 0, pad_size))
             top_sims = F.pad(top_sims, (0, pad_size))
             valid_mask = F.pad(valid_mask, (0, pad_size), value=False)
-            pad_indices = torch.full((batch_size, pad_size), -1, device=device, dtype=top_indices.dtype)
-            top_indices = torch.cat([top_indices, pad_indices], dim=1)
-
-        if return_indices:
-            return retrieved, top_sims, valid_mask, top_indices
         return retrieved, top_sims, valid_mask
 
     def aggregate(
@@ -518,24 +448,6 @@ class ErrorMemoryBank(nn.Module):
             aggregated = torch.nanmedian(masked_values, dim=1)[0]
             aggregated = torch.nan_to_num(aggregated, nan=0.0)
 
-        elif method == 'adaptive':
-            # Blend softmax and weighted mean based on similarity concentration
-            valid_mask_f = valid_mask.float()
-            valid_count = valid_mask_f.sum(dim=-1, keepdim=True)
-            sum_sims = (similarities * valid_mask_f).sum(dim=-1, keepdim=True)
-            mean_sims = sum_sims / (valid_count + 1e-8)
-            var_sims = ((similarities - mean_sims) ** 2 * valid_mask_f).sum(dim=-1, keepdim=True)
-            std_sims = torch.sqrt(var_sims / (valid_count + 1e-8) + 1e-8)
-            sim_max = similarities.masked_fill(~valid_mask, float('-inf')).max(dim=-1, keepdim=True)[0]
-            sim_max = torch.where(valid_count > 0, sim_max, torch.zeros_like(sim_max))
-
-            concentration = sim_max / (std_sims + 1e-8)
-            softmax_weight = torch.sigmoid(concentration - 5.0).unsqueeze(-1)
-
-            agg_softmax = self.aggregate(retrieved_values, similarities, valid_mask, method='softmax')
-            agg_mean = self.aggregate(retrieved_values, similarities, valid_mask, method='weighted_mean')
-            aggregated = softmax_weight * agg_softmax + (1 - softmax_weight) * agg_mean
-
         else:
             raise ValueError(f"Unknown aggregation method: {method}")
 
@@ -576,7 +488,7 @@ class CHRC(nn.Module):
     Complete module combining:
     - POGT feature encoding
     - Historical error retrieval from memory bank
-    - Adaptive error aggregation
+    - Error aggregation
     - Confidence-gated correction
 
     This module addresses the feedback delay problem by using historical
@@ -594,13 +506,8 @@ class CHRC(nn.Module):
         temperature: float = 0.1,
         aggregation: str = 'softmax',
         use_refinement: bool = True,
-        use_dual_key: bool = True,
-        use_context_key: bool = False,
         trust_threshold: float = 0.5,
         gate_steepness: float = 10.0,
-        trajectory_bias: float = 0.0,
-        use_error_decomp: bool = False,
-        error_ema_decay: float = 0.9,
         use_horizon_mask: bool = False,
         horizon_mask_mode: str = 'exp',
         horizon_mask_decay: float = 0.98,
@@ -619,53 +526,19 @@ class CHRC(nn.Module):
         self.top_k = top_k
         self.aggregation = aggregation
         self.use_refinement = use_refinement
-        self.use_dual_key = use_dual_key
-        self.use_context_key = use_context_key
         self.trust_threshold = trust_threshold
         self.gate_steepness = gate_steepness
-        self.trajectory_bias = trajectory_bias
-        self.use_error_decomp = use_error_decomp
-        self.error_ema_decay = error_ema_decay
         self.use_horizon_mask = use_horizon_mask
         self.horizon_mask_mode = horizon_mask_mode
         self.horizon_mask_decay = horizon_mask_decay
         self.horizon_mask_min = horizon_mask_min
         self.min_similarity = min_similarity
-        self.last_topk_indices: Optional[torch.Tensor] = None
-        self.error_ema: Optional[torch.Tensor] = None
-
         # POGT Feature Encoder
         self.pogt_encoder = POGTFeatureEncoder(
             input_dim=num_features,
             feature_dim=feature_dim,
             pooling='mean'
         )
-
-        # Feature encoders for retrieval keys
-        self.pred_encoder = None
-        self.ctx_encoder = None
-        fusion_components = 1  # pogt
-
-        if self.use_dual_key:
-            self.pred_encoder = PredictionEncoder(
-                horizon=horizon,
-                num_features=num_features,
-                feature_dim=feature_dim
-            )
-            fusion_components += 1
-
-        if self.use_context_key:
-            self.ctx_encoder = POGTFeatureEncoder(
-                input_dim=num_features,
-                feature_dim=feature_dim,
-                pooling='mean'
-            )
-            fusion_components += 1
-
-        if fusion_components > 1:
-            self.key_fusion = nn.Linear(feature_dim * fusion_components, feature_dim)
-        else:
-            self.key_fusion = None
 
         # Horizon-aware correction mask
         if self.use_horizon_mask:
@@ -757,9 +630,7 @@ class CHRC(nn.Module):
 
     def _compute_query_key(
         self,
-        prediction: Optional[torch.Tensor],
         pogt: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
         pogt_features: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -771,30 +642,13 @@ class CHRC(nn.Module):
         """
         if pogt_features is None:
             pogt_features = self.encode_pogt(pogt)
-
-        components = [pogt_features]
-
-        if self.use_dual_key and prediction is not None and self.pred_encoder is not None:
-            pred_features = self.pred_encoder(prediction)
-            components.append(pred_features)
-
-        if self.use_context_key and context is not None and self.ctx_encoder is not None:
-            ctx_features = self.ctx_encoder(context)
-            components.append(ctx_features)
-
-        if len(components) == 1:
-            query_key = components[0]
-        else:
-            fused = self.key_fusion(torch.cat(components, dim=-1))
-            query_key = F.normalize(fused, p=2, dim=-1)
-
+        query_key = F.normalize(pogt_features, p=2, dim=-1)
         return query_key, pogt_features
 
     def forward(
         self,
         prediction: torch.Tensor,
         pogt: torch.Tensor,
-        context: Optional[torch.Tensor] = None,
         pogt_features: Optional[torch.Tensor] = None,
         return_details: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict]]:
@@ -815,27 +669,16 @@ class CHRC(nn.Module):
 
         # Encode POGT (or reuse shared features) and build retrieval key
         query_key, pogt_features = self._compute_query_key(
-            prediction=prediction,
             pogt=pogt,
-            context=context,
             pogt_features=pogt_features
         )
 
         # Retrieve from memory bank
-        retrieved_errors, similarities, valid_mask, top_indices = self.memory_bank.retrieve(
+        retrieved_errors, similarities, valid_mask = self.memory_bank.retrieve(
             query_key,
             top_k=self.top_k,
-            min_similarity=self.min_similarity,
-            prev_topk_indices=self.last_topk_indices if self.trajectory_bias > 0 else None,
-            trajectory_bias=self.trajectory_bias,
-            return_indices=True
+            min_similarity=self.min_similarity
         )
-        if self.trajectory_bias > 0:
-            masked_indices = top_indices.clone()
-            masked_indices[~valid_mask] = -1
-            self.last_topk_indices = masked_indices.detach()
-        else:
-            self.last_topk_indices = None
 
         # Aggregate retrieved errors
         aggregated_error = self.memory_bank.aggregate(
@@ -914,8 +757,6 @@ class CHRC(nn.Module):
         self,
         pogt: torch.Tensor,
         error: torch.Tensor,
-        prediction: Optional[torch.Tensor] = None,
-        context: Optional[torch.Tensor] = None,
         importance: Optional[torch.Tensor] = None
     ):
         """
@@ -926,48 +767,22 @@ class CHRC(nn.Module):
         Args:
             pogt: POGT at prediction time [batch, pogt_len, num_features]
             error: Full horizon error [batch, horizon, num_features]
-            prediction: Prediction at the same time [batch, horizon, num_features]
             importance: Optional importance scores [batch]
         """
         # Encode POGT and compute storage key
         with torch.no_grad():
             query_key, _ = self._compute_query_key(
-                prediction=prediction,
                 pogt=pogt,
-                context=context,
                 pogt_features=None
             )
 
-        error_to_store = error
-        if self.use_error_decomp:
-            with torch.no_grad():
-                if (
-                    self.error_ema is None or
-                    self.error_ema.shape != error.shape or
-                    self.error_ema.device != error.device
-                ):
-                    systematic = error
-                else:
-                    systematic = (
-                        self.error_ema_decay * self.error_ema +
-                        (1 - self.error_ema_decay) * error
-                    )
-                self.error_ema = systematic.detach()
-                error_to_store = systematic
-
         # Store in memory bank
-        self.memory_bank.store(query_key, error_to_store, importance)
+        self.memory_bank.store(query_key, error, importance)
 
     def get_statistics(self) -> Dict[str, float]:
         """Get CHRC statistics."""
         stats = self.memory_bank.get_statistics()
         stats['encoder_params'] = sum(p.numel() for p in self.pogt_encoder.parameters())
-        if self.pred_encoder is not None:
-            stats['pred_encoder_params'] = sum(p.numel() for p in self.pred_encoder.parameters())
-        if self.ctx_encoder is not None:
-            stats['ctx_encoder_params'] = sum(p.numel() for p in self.ctx_encoder.parameters())
-        if self.key_fusion is not None:
-            stats['key_fusion_params'] = sum(p.numel() for p in self.key_fusion.parameters())
         if isinstance(self.horizon_mask, nn.Parameter):
             stats['horizon_mask_params'] = self.horizon_mask.numel()
         stats['gate_params'] = sum(p.numel() for p in self.confidence_gate.parameters())
@@ -978,9 +793,3 @@ class CHRC(nn.Module):
     def reset(self):
         """Reset CHRC state (clear memory bank)."""
         self.memory_bank.clear()
-        self.reset_trajectory()
-        self.error_ema = None
-
-    def reset_trajectory(self):
-        """Reset trajectory state (call at sequence boundaries)."""
-        self.last_topk_indices = None

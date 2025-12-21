@@ -67,8 +67,6 @@ class HMem(nn.Module):
         self.share_pogt = getattr(args, 'hmem_share_pogt', False)
         self.use_chrc = getattr(args, 'use_chrc', True)
         self.freeze_backbone = getattr(args, 'freeze', True)
-        self.chrc_use_context_key = getattr(args, 'chrc_use_context_key', False)
-        self.chrc_context_len = getattr(args, 'chrc_context_len', 0)
         self.chrc_use_buckets = getattr(args, 'chrc_use_buckets', False)
         self.chrc_bucket_num = max(1, int(getattr(args, 'chrc_bucket_num', 4)))
         self.timeenc = getattr(args, 'timeenc', 1)
@@ -76,9 +74,6 @@ class HMem(nn.Module):
 
         # Calculate POGT length
         self.pogt_len = max(1, int(self.pred_len * self.pogt_ratio))
-        if self.chrc_context_len <= 0:
-            self.chrc_context_len = self.pogt_len
-
         # If sharing POGT representations, align CHRC feature dim with SNMA encoding dim
         if self.share_pogt and self.chrc_feature_dim != self.memory_dim:
             self.chrc_feature_dim = self.memory_dim
@@ -124,13 +119,8 @@ class HMem(nn.Module):
                     temperature=getattr(args, 'chrc_temperature', 0.1),
                     aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
                     use_refinement=getattr(args, 'chrc_use_refinement', True),
-                    use_dual_key=getattr(args, 'chrc_use_dual_key', True),
-                    use_context_key=self.chrc_use_context_key,
                     trust_threshold=getattr(args, 'chrc_trust_threshold', 0.5),
                     gate_steepness=getattr(args, 'chrc_gate_steepness', 10.0),
-                    trajectory_bias=getattr(args, 'chrc_trajectory_bias', 0.2),
-                    use_error_decomp=getattr(args, 'chrc_use_error_decomp', False),
-                    error_ema_decay=getattr(args, 'chrc_error_ema_decay', 0.9),
                     use_horizon_mask=getattr(args, 'chrc_use_horizon_mask', False),
                     horizon_mask_mode=getattr(args, 'chrc_horizon_mask_mode', 'exp'),
                     horizon_mask_decay=getattr(args, 'chrc_horizon_mask_decay', 0.98),
@@ -152,7 +142,6 @@ class HMem(nn.Module):
         self.register_buffer('_is_cold_start', torch.tensor(True))
         self._last_pogt: Optional[torch.Tensor] = None
         self._last_prediction: Optional[torch.Tensor] = None
-        self._last_context: Optional[torch.Tensor] = None
         self._last_bucket_id: Optional[int] = None
         self._mode = 'train'  # 'train', 'eval', 'online'
         self._lora_ema_params: Dict[str, torch.Tensor] = {}
@@ -283,11 +272,6 @@ class HMem(nn.Module):
         outputs['adapted_prediction'] = adapted_pred
 
         # Step 4: CHRC - Retrieve and apply historical error correction
-        context = None
-        if self.flag_use_chrc and self.chrc is not None and self.chrc_use_context_key:
-            context_len = min(self.chrc_context_len, x_enc.size(1))
-            context = x_enc[:, -context_len:, :]
-
         if self.flag_use_chrc and self.chrc is not None:
             chrc_module = self._select_chrc_module(x_mark_enc)
             if chrc_module is None or self._is_cold_start or chrc_module.memory_bank.is_empty:
@@ -300,7 +284,6 @@ class HMem(nn.Module):
                 corrected_pred, chrc_details = chrc_module(
                     adapted_pred,
                     pogt,
-                    context=context,
                     pogt_features=pogt_features,
                     return_details=True
                 )
@@ -320,7 +303,6 @@ class HMem(nn.Module):
         if self.flag_store_errors and pogt is not None:
             self._last_pogt = pogt.detach()
             self._last_prediction = corrected_pred.detach()
-            self._last_context = context.detach() if context is not None else None
             self._last_bucket_id = self._compute_bucket_id(x_mark_enc)
 
         if return_components:
@@ -353,9 +335,7 @@ class HMem(nn.Module):
         # Store in CHRC memory bank
         chrc_module.store_error(
             self._last_pogt,
-            error,
-            prediction=self._last_prediction,
-            context=self._last_context
+            error
         )
 
         # Update cold start flag
@@ -365,7 +345,6 @@ class HMem(nn.Module):
         # Clear cache
         self._last_pogt = None
         self._last_prediction = None
-        self._last_context = None
         self._last_bucket_id = None
 
     def reset_memory(self, batch_size: int = 1):
@@ -379,7 +358,6 @@ class HMem(nn.Module):
         self._is_cold_start = torch.tensor(True)
         self._last_pogt = None
         self._last_prediction = None
-        self._last_context = None
         self._last_bucket_id = None
         self._lora_ema_params = {}
 

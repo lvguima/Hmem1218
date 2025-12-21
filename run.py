@@ -114,22 +114,10 @@ parser.add_argument('--chrc_feature_dim', type=int, default=128, help='CHRC POGT
 parser.add_argument('--chrc_temperature', type=float, default=0.1, help='Temperature for CHRC aggregation')
 parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Aggregation method for CHRC')
 parser.add_argument('--chrc_use_refinement', type=str_to_bool, default=True, help='Use refinement network in CHRC')
-parser.add_argument('--chrc_use_dual_key', type=str_to_bool, default=True,
-                    help='Use dual-key (POGT + prediction) for CHRC retrieval')
 parser.add_argument('--chrc_trust_threshold', type=float, default=0.5,
                     help='Similarity trust threshold for CHRC soft gating')
 parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
                     help='Steepness for CHRC soft gating')
-parser.add_argument('--chrc_trajectory_bias', type=float, default=0.2,
-                    help='Trajectory bias strength for CHRC retrieval (0 disables)')
-parser.add_argument('--chrc_use_context_key', type=str_to_bool, default=False,
-                    help='Use context key from input history for CHRC retrieval')
-parser.add_argument('--chrc_context_len', type=int, default=0,
-                    help='Context length for CHRC context key (0 uses pogt_len)')
-parser.add_argument('--chrc_use_error_decomp', type=str_to_bool, default=False,
-                    help='Store EMA-smoothed errors instead of raw errors')
-parser.add_argument('--chrc_error_ema_decay', type=float, default=0.9,
-                    help='EMA decay for CHRC error decomposition')
 parser.add_argument('--chrc_use_horizon_mask', type=str_to_bool, default=False,
                     help='Apply horizon-aware correction mask')
 parser.add_argument('--chrc_horizon_mask_mode', type=str, default='exp',

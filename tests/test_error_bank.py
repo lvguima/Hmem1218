@@ -236,15 +236,6 @@ class TestErrorMemoryBank:
         aggregated = memory_bank.aggregate(retrieved, similarities, valid_mask, 'max')
         assert aggregated.shape == (2, 24, 7)
 
-    def test_aggregate_adaptive(self, memory_bank):
-        """Test adaptive aggregation."""
-        retrieved = torch.randn(2, 5, 24, 7)
-        similarities = torch.rand(2, 5)
-        valid_mask = torch.ones(2, 5, dtype=torch.bool)
-
-        aggregated = memory_bank.aggregate(retrieved, similarities, valid_mask, 'adaptive')
-        assert aggregated.shape == (2, 24, 7)
-
     def test_aggregate_with_invalid_mask(self, memory_bank):
         """Test aggregation handles invalid entries."""
         retrieved = torch.randn(2, 5, 24, 7)
