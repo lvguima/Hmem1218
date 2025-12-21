@@ -118,7 +118,7 @@ parser.add_argument('--chrc_trust_threshold', type=float, default=0.5,
                     help='Similarity trust threshold for CHRC soft gating')
 parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
                     help='Steepness for CHRC soft gating')
-parser.add_argument('--chrc_use_horizon_mask', type=str_to_bool, default=False,
+parser.add_argument('--chrc_use_horizon_mask', type=str_to_bool, default=True,
                     help='Apply horizon-aware correction mask')
 parser.add_argument('--chrc_horizon_mask_mode', type=str, default='exp',
                     help='Horizon mask mode: exp, linear, or learned')
@@ -126,7 +126,7 @@ parser.add_argument('--chrc_horizon_mask_decay', type=float, default=0.98,
                     help='Decay factor for exp horizon mask')
 parser.add_argument('--chrc_horizon_mask_min', type=float, default=0.2,
                     help='Minimum weight for horizon mask')
-parser.add_argument('--chrc_use_buckets', type=str_to_bool, default=False,
+parser.add_argument('--chrc_use_buckets', type=str_to_bool, default=True,
                     help='Enable time-aware CHRC memory buckets')
 parser.add_argument('--chrc_bucket_num', type=int, default=4,
                     help='Number of CHRC buckets when time-aware buckets are enabled')

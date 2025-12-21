@@ -56,6 +56,21 @@ bash scripts/online/iTransformer/HMem/Traffic.sh
 
 Each script runs 3 iterations on horizons [24, 48, 96].
 
+### Baseline (P2+P7+P8)
+
+Freeze the current best CHRC configuration (soft gating + horizon mask + buckets):
+
+```bash
+bash scripts/online/iTransformer/HMem/baseline_P2P7P8.sh ETTm1
+bash scripts/online/iTransformer/HMem/baseline_P2P7P8.sh Weather
+```
+
+You can also pass a single horizon:
+
+```bash
+bash scripts/online/iTransformer/HMem/baseline_P2P7P8.sh ETTm1 96
+```
+
 ### 3. All Datasets
 
 To run H-Mem on all 5 datasets:
