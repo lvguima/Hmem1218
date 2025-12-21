@@ -80,6 +80,8 @@ hyperparams = {
         'chrc_horizon_mask_mode': 'exp',
         'chrc_horizon_mask_decay': 0.98,
         'chrc_horizon_mask_min': 0.2,
+        'chrc_use_buckets': False,
+        'chrc_bucket_num': 4,
         # POGT settings
         'pogt_ratio': 0.5,  # Use 50% of horizon as POGT
         'hmem_pogt_source': 'batch_x',

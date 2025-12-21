@@ -138,6 +138,10 @@ parser.add_argument('--chrc_horizon_mask_decay', type=float, default=0.98,
                     help='Decay factor for exp horizon mask')
 parser.add_argument('--chrc_horizon_mask_min', type=float, default=0.2,
                     help='Minimum weight for horizon mask')
+parser.add_argument('--chrc_use_buckets', type=str_to_bool, default=False,
+                    help='Enable time-aware CHRC memory buckets')
+parser.add_argument('--chrc_bucket_num', type=int, default=4,
+                    help='Number of CHRC buckets when time-aware buckets are enabled')
 parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
                     help='Deprecated: minimum absolute similarity for CHRC retrieval (use soft gate instead)')
 parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
