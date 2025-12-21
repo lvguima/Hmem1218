@@ -1,5 +1,5 @@
 
-
+### P2实验结果
 
 `
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma True --use_chrc False --lora_ema_decay 0.9  MSE: 0.775903 | MAE: 0.558986 | RMSE: 0.880854

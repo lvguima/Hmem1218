@@ -518,6 +518,24 @@ class ErrorMemoryBank(nn.Module):
             aggregated = torch.nanmedian(masked_values, dim=1)[0]
             aggregated = torch.nan_to_num(aggregated, nan=0.0)
 
+        elif method == 'adaptive':
+            # Blend softmax and weighted mean based on similarity concentration
+            valid_mask_f = valid_mask.float()
+            valid_count = valid_mask_f.sum(dim=-1, keepdim=True)
+            sum_sims = (similarities * valid_mask_f).sum(dim=-1, keepdim=True)
+            mean_sims = sum_sims / (valid_count + 1e-8)
+            var_sims = ((similarities - mean_sims) ** 2 * valid_mask_f).sum(dim=-1, keepdim=True)
+            std_sims = torch.sqrt(var_sims / (valid_count + 1e-8) + 1e-8)
+            sim_max = similarities.masked_fill(~valid_mask, float('-inf')).max(dim=-1, keepdim=True)[0]
+            sim_max = torch.where(valid_count > 0, sim_max, torch.zeros_like(sim_max))
+
+            concentration = sim_max / (std_sims + 1e-8)
+            softmax_weight = torch.sigmoid(concentration - 5.0).unsqueeze(-1)
+
+            agg_softmax = self.aggregate(retrieved_values, similarities, valid_mask, method='softmax')
+            agg_mean = self.aggregate(retrieved_values, similarities, valid_mask, method='weighted_mean')
+            aggregated = softmax_weight * agg_softmax + (1 - softmax_weight) * agg_mean
+
         else:
             raise ValueError(f"Unknown aggregation method: {method}")
 
