@@ -85,6 +85,9 @@ hyperparams = {
         'weight_decay': 0.01,
         'freeze': True,  # Freeze backbone
         'use_snma': False,
+        'use_snma_light': False,
+        'snma_beta': 0.1,
+        'snma_memory_dim': 128,
         'use_chrc': True,
     },
 }

@@ -146,6 +146,10 @@ parser.add_argument('--hmem_pogt_source', type=str, default='batch_x',
 parser.add_argument('--hmem_warmup_steps', type=int, default=100, help='SNMA warmup steps')
 parser.add_argument('--hmem_joint_training', type=str_to_bool, default=True, help='Enable joint SNMA+CHRC training')
 parser.add_argument('--use_snma', type=str_to_bool, default=False, help='Use SNMA (neural memory adapter)')
+parser.add_argument('--use_snma_light', type=str_to_bool, default=False,
+                    help='Use SNMA-Light (residual predictor)')
+parser.add_argument('--snma_beta', type=float, default=0.1, help='Scale for SNMA-Light residual')
+parser.add_argument('--snma_memory_dim', type=int, default=128, help='SNMA-Light memory dimension')
 parser.add_argument('--use_chrc', type=str_to_bool, default=True, help='Use CHRC (retrieval corrector)')
 
 # data loader

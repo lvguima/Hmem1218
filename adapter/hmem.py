@@ -4,6 +4,7 @@ H-Mem: Horizon-Bridging Neural Memory Network for Online Time Series Forecasting
 Main module integrating:
 - Frozen backbone with LoRA injection
 - SNMA (Short-term Neural Memory Adapter)
+- SNMA-Light (lightweight residual adapter)
 - CHRC (Cross-Horizon Retrieval Corrector)
 - Fusion mechanism for combining adaptations
 
@@ -26,6 +27,7 @@ from adapter.module.lora import (
     collect_lora_layers
 )
 from adapter.module.neural_memory import SNMA
+from adapter.module.snma_light import SNMALight
 from util.error_bank import CHRC
 
 
@@ -36,8 +38,9 @@ class HMem(nn.Module):
     Architecture:
     1. Frozen Backbone with LoRA injection points
     2. SNMA: Generates LoRA params from POGT via neural memory
-    3. CHRC: Retrieves historical error patterns for correction
-    4. Fusion mechanism: Intelligently combines adapted prediction with correction
+    3. SNMA-Light: Predicts residual correction without LoRA
+    4. CHRC: Retrieves historical error patterns for correction
+    5. Fusion mechanism: Intelligently combines adapted prediction with correction
 
     Args:
         backbone: Pre-trained forecasting model (PatchTST, iTransformer, etc.)
@@ -59,6 +62,7 @@ class HMem(nn.Module):
         self.lora_alpha = getattr(args, 'lora_alpha', 16.0)
         self.lora_ema_decay = getattr(args, 'lora_ema_decay', 0.0)
         self.memory_dim = getattr(args, 'memory_dim', 256)
+        self.snma_memory_dim = getattr(args, 'snma_memory_dim', self.memory_dim)
         self.bottleneck_dim = getattr(args, 'bottleneck_dim', 32)
         self.memory_capacity = getattr(args, 'memory_capacity', 1000)
         self.retrieval_top_k = getattr(args, 'retrieval_top_k', 5)
@@ -66,6 +70,9 @@ class HMem(nn.Module):
         self.chrc_feature_dim = getattr(args, 'chrc_feature_dim', 128)
         self.share_pogt = getattr(args, 'hmem_share_pogt', False)
         self.use_chrc = getattr(args, 'use_chrc', True)
+        self.use_snma = getattr(args, 'use_snma', False)
+        self.use_snma_light = getattr(args, 'use_snma_light', False)
+        self.snma_beta = getattr(args, 'snma_beta', 0.1)
         self.freeze_backbone = getattr(args, 'freeze', True)
         self.chrc_use_buckets = getattr(args, 'chrc_use_buckets', False)
         self.chrc_bucket_num = max(1, int(getattr(args, 'chrc_bucket_num', 4)))
@@ -75,9 +82,15 @@ class HMem(nn.Module):
         # Calculate POGT length
         self.pogt_len = max(1, int(self.pred_len * self.pogt_ratio))
         # If sharing POGT representations, align CHRC feature dim with SNMA encoding dim
-        if self.share_pogt and self.chrc_feature_dim != self.memory_dim:
-            self.chrc_feature_dim = self.memory_dim
-            args.chrc_feature_dim = self.chrc_feature_dim
+        if self.share_pogt:
+            target_dim = None
+            if self.use_snma:
+                target_dim = self.memory_dim
+            elif self.use_snma_light:
+                target_dim = self.snma_memory_dim
+            if target_dim is not None and self.chrc_feature_dim != target_dim:
+                self.chrc_feature_dim = target_dim
+                args.chrc_feature_dim = self.chrc_feature_dim
 
         # 1. Inject LoRA layers into backbone and freeze if needed
         if self.freeze_backbone:
@@ -105,6 +118,16 @@ class HMem(nn.Module):
             num_heads=getattr(args, 'memory_num_heads', 4)
         )
         self.snma.register_lora_layers(lora_dims)
+
+        # 2b. SNMA-Light: Residual predictor (no HyperNetwork/LoRA)
+        self.snma_light = None
+        if self.use_snma_light:
+            self.snma_light = SNMALight(
+                input_features=self.enc_in,
+                memory_dim=self.snma_memory_dim,
+                horizon=self.pred_len,
+                num_features=self.enc_in
+            )
 
         # 3. CHRC: Cross-Horizon Retrieval Corrector
         if self.use_chrc:
@@ -147,7 +170,8 @@ class HMem(nn.Module):
         self._lora_ema_params: Dict[str, torch.Tensor] = {}
 
         # Flags for controlling behavior (read from args!)
-        self.flag_use_snma = getattr(args, 'use_snma', False)
+        self.flag_use_snma = self.use_snma
+        self.flag_use_snma_light = self.use_snma_light
         self.flag_use_chrc = self.use_chrc
         self.flag_store_errors = True
 
@@ -236,7 +260,7 @@ class HMem(nn.Module):
         outputs['base_prediction'] = base_pred
 
         # If no POGT or not using adaptations, return base prediction
-        if pogt is None or (not self.flag_use_snma and not self.flag_use_chrc):
+        if pogt is None or (not self.flag_use_snma and not self.flag_use_snma_light and not self.flag_use_chrc):
             outputs['prediction'] = base_pred
             if return_components:
                 outputs['adapted_prediction'] = base_pred
@@ -271,6 +295,17 @@ class HMem(nn.Module):
 
         outputs['adapted_prediction'] = adapted_pred
 
+        # Step 3b: SNMA-Light residual prediction (no LoRA)
+        delta_snma = None
+        if self.flag_use_snma_light and self.snma_light is not None:
+            delta_snma, snma_features = self.snma_light(
+                pogt,
+                return_features=self.share_pogt and not self.flag_use_snma
+            )
+            if self.share_pogt and not self.flag_use_snma and snma_features is not None:
+                pogt_features = snma_features
+            outputs['snma_light_delta'] = delta_snma
+
         # Step 4: CHRC - Retrieve and apply historical error correction
         if self.flag_use_chrc and self.chrc is not None:
             chrc_module = self._select_chrc_module(x_mark_enc)
@@ -294,6 +329,12 @@ class HMem(nn.Module):
         else:
             corrected_pred = adapted_pred
             outputs['correction'] = torch.zeros_like(adapted_pred)
+
+        # Step 5: Apply SNMA-Light residual correction (small beta)
+        if delta_snma is not None:
+            corrected_pred = corrected_pred + self.snma_beta * delta_snma
+            outputs['snma_light_prediction'] = corrected_pred
+            outputs['snma_light_beta'] = self.snma_beta
 
         outputs['prediction'] = corrected_pred
         outputs['final_prediction'] = corrected_pred
@@ -350,6 +391,8 @@ class HMem(nn.Module):
     def reset_memory(self, batch_size: int = 1):
         """Reset all memory states (for new sequence/dataset)."""
         self.snma.reset(batch_size=batch_size)
+        if self.snma_light is not None:
+            self.snma_light.reset()
         if isinstance(self.chrc, nn.ModuleList):
             for chrc in self.chrc:
                 chrc.reset()
@@ -366,6 +409,13 @@ class HMem(nn.Module):
         for param in self.snma.parameters():
             param.requires_grad = not freeze
 
+    def freeze_snma_light(self, freeze: bool = True):
+        """Freeze/unfreeze SNMA-Light parameters."""
+        if self.snma_light is None:
+            return
+        for param in self.snma_light.parameters():
+            param.requires_grad = not freeze
+
     def freeze_chrc(self, freeze: bool = True):
         """Freeze/unfreeze CHRC parameters."""
         if isinstance(self.chrc, nn.ModuleList):
@@ -377,13 +427,18 @@ class HMem(nn.Module):
                 param.requires_grad = not freeze
 
     def freeze_all_adapters(self, freeze: bool = True):
-        """Freeze/unfreeze all adapter parameters (SNMA + CHRC)."""
+        """Freeze/unfreeze all adapter parameters (SNMA + SNMA-Light + CHRC)."""
         self.freeze_snma(freeze)
+        self.freeze_snma_light(freeze)
         self.freeze_chrc(freeze)
 
     def enable_snma(self, enable: bool = True):
         """Enable/disable SNMA adaptation."""
         self.flag_use_snma = enable
+
+    def enable_snma_light(self, enable: bool = True):
+        """Enable/disable SNMA-Light correction."""
+        self.flag_use_snma_light = enable and self.snma_light is not None
 
     def enable_chrc(self, enable: bool = True):
         """Enable/disable CHRC correction."""
@@ -510,6 +565,9 @@ class HMem(nn.Module):
             'is_cold_start': self._is_cold_start.item(),
         }
 
+        if self.snma_light is not None:
+            stats['snma_light_params'] = sum(p.numel() for p in self.snma_light.parameters())
+
         if isinstance(self.chrc, nn.ModuleList):
             stats['chrc_params'] = sum(p.numel() for p in self.chrc.parameters())
             stats['memory_bank'] = [chrc.get_statistics() for chrc in self.chrc]
@@ -526,6 +584,8 @@ class HMem(nn.Module):
             'lora_alpha': self.lora_alpha,
             'lora_ema_decay': self.lora_ema_decay,
             'memory_dim': self.memory_dim,
+            'snma_memory_dim': self.snma_memory_dim,
+            'snma_beta': self.snma_beta,
             'bottleneck_dim': self.bottleneck_dim,
             'memory_capacity': self.memory_capacity,
             'retrieval_top_k': self.retrieval_top_k,
@@ -533,6 +593,7 @@ class HMem(nn.Module):
             'pogt_len': self.pogt_len,
             'chrc_feature_dim': self.chrc_feature_dim,
             'use_chrc': self.use_chrc,
+            'use_snma_light': self.use_snma_light,
             'freeze_backbone': self.freeze_backbone,
             'share_pogt': self.share_pogt,
         }
