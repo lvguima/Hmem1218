@@ -1,196 +1,236 @@
-# 1220 Experiments Analysis (Condensed)
+# 1220 实验分析 (精简版)
 
-## Scope
-This document condenses the completed 1220 H-Mem/CHRC iterations and their
-experimental outcomes from `1220Hmem_improve.md` and `1220hmem_improve_results.md`.
+## 范围
+本文档浓缩了已完成的 1220 H-Mem/CHRC 迭代过程及其实验结果，内容源自 `1220Hmem_improve.md` 和 `1220hmem_improve_results.md`。
 
-## Results Summary Table
+## 结果汇总表
 
-| Phase | Method | ETTm1 MSE | Weather MSE | Verdict |
+| 阶段 | 方法 | ETTm1 MSE | Weather MSE | 结论 |
 |-------|--------|-----------|-------------|---------|
-| P0 | CHRC-only baseline | 0.778 | 1.770 | Baseline |
-| P1 | Dual-Key | 0.778 | 1.916 (+8%) | ❌ Failed |
-| P2 | Soft Gating | **0.756 (-2.8%)** | **1.578 (-11%)** | ✅ Success |
-| P3 | Trajectory Bias | 0.772 | 1.920 | ❌ Harmful |
-| P4 | Adaptive Aggregation | 0.772 | 1.944 | ❌ Harmful |
-| P5 | Error Decomposition | 0.759 | 1.958 | ⚪ No effect |
-| P6 | Context Key | 0.771 | 1.945 | ⚪ Negligible |
-| P7 | Horizon Mask | **0.725 (-6.8%)** | **1.527 (-14%)** | ✅ Major win |
-| P8 | Time Buckets | **0.710 (-8.7%)** | 1.584 | ✅ ETTm1 best |
+| P0 | 仅 CHRC 基线 | 0.778 | 1.770 | 基准 |
+| P1 | 双键检索 (Dual-Key) | 0.778 | 1.916 (+8%) | ❌ 失败 |
+| P2 | 软门控 (Soft Gating) | **0.756 (-2.8%)** | **1.578 (-11%)** | ✅ 成功 |
+| P3 | 轨迹偏置 (Trajectory Bias) | 0.772 | 1.920 | ❌ 有害 |
+| P4 | 自适应聚合 (Adaptive Aggregation) | 0.772 | 1.944 | ❌ 有害 |
+| P5 | 误差分解 (Error Decomposition) | 0.759 | 1.958 | ⚪ 无效果 |
+| P6 | 上下文键 (Context Key) | 0.771 | 1.945 | ⚪ 忽略不计 |
+| P7 | 视野掩码 (Horizon Mask) | **0.725 (-6.8%)** | **1.527 (-14%)** | ✅ 重大胜利 |
+| P8 | 时间分桶 (Time Buckets) | **0.710 (-8.7%)** | 1.584 | ✅ ETTm1 最佳 |
 
-**Best achieved:** ETTm1=0.710 (P8), Weather=1.527 (P7)
+**最佳成绩：** ETTm1=**0.703** (P2+P7+P8), Weather=**1.452** (P2+P7+P8)
 
-## Key Findings by Phase
+## 各阶段关键发现
 
-- **P0 (diagnosis + causal POGT):** Similarity distribution is very narrow
-  (0.97-0.995), explaining why hard threshold `chrc_min_similarity` had no effect.
-  Baselines are stable and suitable for comparisons.
+- **P0 (诊断 + 因果 POGT):** 相似度分布非常窄 (0.97-0.995)，解释了为什么硬阈值 `chrc_min_similarity` 没有效果。基线稳定，适合进行比较。
 
-- **P1 (dual-key retrieval):** ETTm1 unchanged; Weather worsened by 8%. The
-  prediction-based key likely introduces redundancy (prediction already encodes
-  POGT) and dilutes retrieval precision by expanding the key space.
+- **P1 (双键检索):** ETTm1 无变化；Weather 恶化了 8%。基于预测的键可能引入了冗余（预测已经编码了 POGT），并且通过扩展键空间稀释了检索精度。
 
-- **P2 (soft gating):** **Significant improvement** (ETTm1 -2.8%, Weather -11%).
-  Despite narrow similarity distribution, the continuous gating function provides
-  fine-grained confidence modulation that hard thresholds cannot achieve. Note:
-  tau values (0.3/0.5/0.7) show identical results, suggesting the mechanism works
-  but is insensitive to threshold choice in this similarity regime.
+- **P2 (软门控):** **显著改进** (ETTm1 -2.8%, Weather -11%)。尽管相似度分布较窄，连续的门控函数提供了硬阈值无法实现的细粒度置信度调节。注意：tau 值 (0.3/0.5/0.7) 显示出相同的结果，表明该机制有效，但在这种相似度范围内对阈值选择不敏感。
 
-- **P3 (trajectory bias):** Negligible to harmful effect. Temporal continuity
-  assumption ("if t matches k, then t+1 should prefer k+1") does not hold for
-  error patterns, which are more stochastic than the underlying signal.
+- **P3 (轨迹偏置):** 效果从可忽略到有害。时间连续性假设（“如果 t 匹配 k，那么 t+1 应该倾向于 k+1”）对误差模式不成立，误差模式比潜在信号更具随机性。
 
-- **P4 (adaptive aggregation):** Clearly worse than fixed strategies. Attempting
-  to dynamically blend softmax/weighted_mean based on similarity distribution
-  amplifies noise rather than reducing it. Fixed strategies are more robust.
+- **P4 (自适应聚合):** 明显不如固定策略。试图根据相似度分布动态混合 softmax/加权平均，实际上放大了噪声而不是减少它。固定策略更稳健。
 
-- **P5 (error decomposition):** Zero effect (identical MSE values). Either the
-  EMA decomposition has implementation issues, or time series errors lack the
-  "systematic + noise" structure assumed by the design.
+- **P5 (误差分解):** 零效果（MSE 值相同）。要么是 EMA 分解有实现问题，要么是时间序列误差缺乏设计所假设的“系统性 + 噪声”结构。
 
-- **P6 (context key):** Minimal gain (<0.1%). Raw input tail features are too
-  noisy to provide meaningful context signal.
+- **P6 (上下文键):** 增益极小 (<0.1%)。原始输入尾部特征噪声太大，无法提供有意义的上下文信号。
 
-- **P7 (horizon mask):** **Largest gains** (ETTm1 -6.8%, Weather -14%). Reveals
-  a fundamental insight: error patterns have temporal locality—corrections are
-  valid for near-term predictions but become noise for long-term predictions.
-  Exponential decay (0.98, min=0.2) effectively exploits this structure.
+- **P7 (视野掩码):** **最大收益** (ETTm1 -6.8%, Weather -14%)。揭示了一个基本见解：误差模式具有时间局部性——修正对近期预测有效，但对长期预测则变为噪声。指数衰减 (0.98, min=0.2) 有效地利用了这一结构。
 
-- **P8 (time buckets):** **Best ETTm1** (0.710) with 4 buckets; Weather slightly
-  worse than P7 best but better than P0. Bucketed memory isolates time-regime
-  patterns, highly effective for periodic data (ETTm1) but less so for aperiodic
-  data (Weather).
+- **P8 (时间分桶):** **ETTm1 最佳** (0.710)，使用 4 个分桶；Weather 略差于 P7 最佳结果但优于 P0。分桶记忆隔离了时间机制模式，对周期性数据 (ETTm1) 非常有效，但对非周期性数据 (Weather) 效果较差。
 
 ---
 
-## Deep Insights
+## 深度见解
 
-### 1. Theory vs Practice Gap
+### 1. 理论与实践的差距
 
-The most theoretically justified improvements (P1 Dual-Key, P3 Trajectory) **failed completely**, while simpler mechanisms (P2, P7) succeeded. This suggests:
+理论上最合理的改进（P1 双键，P3 轨迹）**完全失败**，而更简单的机制（P2，P7）却成功了。这表明：
 
-- Time series error patterns are more stochastic than assumed
-- Inductive biases that "sound reasonable" often don't match reality
-- **Data-driven simplicity > theory-driven complexity**
+- 时间序列误差模式比假设的更具随机性
+- “听起来合理”的归纳偏置往往不符合现实
+- **数据驱动的简单性 > 理论驱动的复杂性**
 
-### 2. What Actually Works: Structural Priors
+### 2. 真正有效的是：结构先验
 
-The two successful mechanisms share a common trait—they encode **task-level structural priors**:
+两个成功的机制有一个共同点——它们编码了**任务级的结构先验**：
 
-| Mechanism | Structural Prior |
+| 机制 | 结构先验 |
 |-----------|-----------------|
-| P7 Horizon Mask | "Error transferability decays with prediction horizon" |
-| P8 Time Buckets | "Similar time regimes have similar error patterns" |
+| P7 视野掩码 | “误差可转移性随预测视野衰减” |
+| P8 时间分桶 | “相似的时间机制具有相似的误差模式” |
 
-These are fundamentally different from retrieval mechanics (P1, P3, P4) which try to improve *how* we retrieve, rather than *what* we should trust.
+这与检索机制（P1, P3, P4）根本不同，后者试图改进 *如何* 检索，而不是 *什么* 值得信任。
 
-### 3. Why P1 Dual-Key Failed
+### 3. 为什么 P1 双键失败了
 
-The design assumed: "Same POGT + different prediction → different error"
+设计假设：“相同的 POGT + 不同的预测 → 不同的误差”
 
-Reality:
-1. Prediction Ŷ = f(POGT, context), so encoding both is redundant
-2. Expanding key dimensionality dilutes retrieval matches
-3. Error patterns may correlate weakly with prediction magnitude
+现实：
+1. 预测 Ŷ = f(POGT, context)，所以同时编码两者是冗余的
+2. 扩展键的维度稀释了检索匹配
+3. 误差模式可能与预测幅度相关性较弱
 
-### 4. The Effective CHRC Formula
+### 4. 有效的 CHRC 公式
 
-After these experiments, the empirically validated correction is:
+经过这些实验，经验证有效的修正公式为：
 
 ```
 Correction = α(similarity) × w(horizon) × retrieved_error
-             ↑ P2 soft gate   ↑ P7 decay
+             ↑ P2 软门控      ↑ P7 衰减
 ```
 
-Not needed: dual-keys, trajectory bias, adaptive aggregation, error decomposition.
+不需要：双键、轨迹偏置、自适应聚合、误差分解。
 
-### 5. Dataset-Dependent Mechanisms
+### 5. 依赖数据集的机制
 
-P8 (Time Buckets) reveals a key insight: **method effectiveness depends on data characteristics**.
+P8 (时间分桶) 揭示了一个关键见解：**方法的有效性取决于数据特征**。
 
-| Data Type | Effective Mechanisms | Ineffective |
+| 数据类型 | 有效机制 | 无效机制 |
 |-----------|---------------------|-------------|
-| Strong periodicity (ETTm1) | P7 + P8 | P1, P3 |
-| Weak periodicity (Weather) | P7 only | P1, P3, P8 |
+| 强周期性 (ETTm1) | P7 + P8 | P1, P3 |
+| 弱周期性 (Weather) | P7 only | P1, P3, P8 |
 
-This suggests future work should include automatic data characterization.
+这建议未来的工作应包括自动数据特征描述。
 
-### 6. The "Insensitivity" Paradox of Soft Gating (P2)
+### 6. 软门控 (P2) 的“不敏感”悖论
 
-The fact that `tau` values of 0.3, 0.5, and 0.7 yielded identical results (P2) is not just robustness—it confirms the findings from P0. Since the similarity distribution is extremely narrow and high (0.97–0.99), `Sigmoid(γ * (MaxSim - τ))` saturates to ≈1.0 for all tested taus.
-**Implication:** Soft Gating works not because of the threshold choice, but likely because the function shape inherently dampens the *very few* outliers that drop below the high baseline. Future versions should use **Percentile Normalization** (relative rank) rather than absolute cosine similarity.
+`tau` 值 0.3, 0.5, 和 0.7 产生相同结果 (P2) 的事实不仅仅是稳健性——它证实了 P0 的发现。由于相似度分布极窄且高 (0.97–0.99)，`Sigmoid(γ * (MaxSim - τ))` 对所有测试的 tau 值都饱和至 ≈1.0。
+**含义：** 软门控起作用不是因为阈值的选择，而很可能是因为函数形状本身抑制了 *极少数* 低于高基线的异常值。未来的版本应该使用 **百分位归一化**（相对排名）而不是绝对余弦相似度。
 
-### 7. Why Error Decomposition (P5) Failed
+### 7. 为什么误差分解 (P5) 失败了
 
-Error decomposition assumes `Error = Systematic_Bias + Random_Noise`.
-**The flaw:** In Online TSF, the "Systematic Bias" itself is non-stationary due to rapid Concept Drift. Yesterday's bias is not today's bias.
-By the time the EMA estimator "learns" the current bias, the distribution has likely shifted. Thus, attempting to separate bias from noise in a highly dynamic stream becomes a lagging indicator that adds no predictive value.
+误差分解假设 `Error = Systematic_Bias + Random_Noise`。
+**缺陷：** 在在线 TSF 中，“系统性偏差”本身由于快速的概念漂移 (Concept Drift) 也是非平稳的。昨天的偏差不是今天的偏差。
+当 EMA 估计器“学习”到当前偏差时，分布可能已经发生了变化。因此，试图在高度动态的流中分离偏差和噪声成为一个滞后指标，没有增加预测价值。
 
 ---
 
-## Roadmap
+## 路线图
 
-### Short-term (Immediate)
+### 短期实验结果 (已完成 ✅)
 
-1. **Validate P7+P8 combination:**
-   ```bash
-   # ETTm1: combine P7 horizon mask + P8 time buckets
-   --use_horizon_mask True --chrc_use_buckets True --bucket_num 4
+#### 组合验证结果汇总
 
-   # Weather: P7 only (no buckets)
-   --use_horizon_mask True --chrc_use_buckets False
-   ```
+| 配置 | ETTm1 MSE | Weather MSE | 备注 |
+|------|-----------|-------------|------|
+| P0 baseline | 0.778 | 1.770 | 原始基线 |
+| 单项最佳 (P7/P8) | 0.710 | 1.527 | 之前最佳 |
+| **P2+P7+P8 (softmax, bucket=4)** | **0.703** | **1.452** | 🏆 最终最佳 |
+| P2+P7+P8 (weighted_mean, bucket=4) | 0.705 | 1.457 | 略差 |
+| P2+P7 (无 bucket) | 0.725 | 1.527 | 对照 |
+| P2+P7+P8 (bucket=2) | 0.709 | - | bucket 过少 |
+| P2+P7+P8 (bucket=8) | 0.704 | - | 接近最佳 |
 
-2. **Aggregation sweep on best config:** Compare softmax vs weighted_mean on P7+P8 baseline to confirm fixed aggregation superiority.
+#### 关键发现
 
-3. **Bucket sensitivity:** Test bucket_num ∈ {2, 4, 8} on ETTm1 to find optimal granularity.
+**1. P2+P7+P8 产生协同效应**
 
-4. **Code cleanup:** Remove or deprecate P1, P3, P4, P5 code paths to simplify maintenance.
+| 数据集 | 单项最佳 | P2+P7+P8 组合 | 额外提升 |
+|--------|---------|---------------|---------|
+| ETTm1 | 0.710 | **0.703** | **-1.0%** |
+| Weather | 1.527 | **1.452** | **-4.9%** |
 
-### Mid-term (1-2 weeks)
+**2. Weather 上 Buckets 意外有效！**
 
-1. **Automatic periodicity detection:**
-   - Compute ACF/spectral density at runtime
-   - Auto-enable buckets for high-periodicity data
-   - Formula: `use_buckets = (acf_peak > threshold)`
+之前 P8 单独测试时 Weather 得到 1.584（比 P7 的 1.527 差），但 P2+P7+P8 组合达到 **1.452**。
 
-2. **Horizon mask auto-tuning:**
-   - Current decay=0.98, min=0.2 are hand-tuned
-   - Learn from error variance vs horizon: `w[h] ∝ 1/Var(error[h])`
+**解释**：P7 过滤长期噪声 + P2 提供置信度调节 → P8 的时间分割才能发挥作用。三者协同：
+- P7 控制"何时信任"（近期 > 远期）
+- P2 控制"信任多少"（软门控）
+- P8 控制"从哪里检索"（时间分桶）
 
-3. **Investigate P5 failure:**
-   - Add logging to verify EMA updates are happening
-   - Test alternative decomposition (e.g., moving average filter)
+**3. 聚合策略差异缩小**
 
-4. **Cross-dataset validation:** Test best configs on ETTh1, ETTh2, ECL, Traffic.
+在完整 P2+P7+P8 配置下，softmax 与 weighted_mean 差距仅 0.3%。**softmax 略优**，作为默认选择。
 
-### Long-term (Research directions)
+**4. Bucket 数量敏感性**
 
-1. **Revisit SNMA with simplified design:**
-   - Now that CHRC is optimized, test if a minimal SNMA (no hypernetwork, just direct LoRA update) can add value
-   - Key constraint: must not conflict with CHRC corrections
+| bucket_num | ETTm1 MSE |
+|------------|-----------|
+| 2 | 0.709 |
+| **4** | **0.703** |
+| 8 | 0.704 |
 
-2. **Alternative retrieval mechanisms:**
-   - Attention-based retrieval instead of cosine similarity
-   - Learned similarity metric (contrastive learning on error prediction)
+**4 是最优点**（ETTm1 是小时级数据，4 buckets ≈ 6 小时间隔）。
 
-3. **Transferable configurations:**
-   - Meta-learn CHRC hyperparameters across datasets
-   - Goal: zero-shot config for new datasets based on data statistics
+#### 最终最佳配置
 
-4. **Theoretical understanding:**
-   - Formalize why horizon mask works (error autocorrelation analysis)
+```bash
+# ETTm1 & Weather 通用配置
+--chrc_trust_threshold 0.5 --chrc_gate_steepness 10.0 \
+--chrc_use_horizon_mask True --chrc_horizon_mask_mode exp \
+--chrc_horizon_mask_decay 0.98 --chrc_horizon_mask_min 0.2 \
+--chrc_use_buckets True --chrc_bucket_num 4 --chrc_aggregation softmax
+```
+
+#### 目标达成度
+
+| 数据集 | 原目标 | 最终结果 | 总提升 | 状态 |
+|--------|--------|---------|--------|------|
+| ETTm1 | ≤0.750 | **0.703** | -9.6% | ✅ 超额完成 |
+| Weather | ≤1.400 | **1.452** | -18.0% | ⚠️ 接近 (差 3.7%) |
+
+#### 修正之前的结论
+
+> ❌ 错误："弱周期性数据 (Weather) 不适合 P8"
+>
+> ✅ 正确："P8 需要 P2+P7 的配合才能在 Weather 上生效"
+
+**核心洞察**：单一改进可能无效，但组合后可能产生协同效应。
+
+---
+
+### 后续待办
+
+#### 1. 代码清理
+
+移除或弃用 P1, P3, P4, P5 代码路径以简化维护。
+
+### 中期 (1-2 周)
+
+1. **自动周期性检测:**
+   - 运行时计算 ACF/谱密度
+   - 对高周期性数据自动启用分桶
+   - 公式：`use_buckets = (acf_peak > threshold)`
+
+2. **视野掩码自动调优:**
+   - 当前 decay=0.98, min=0.2 是手动调整的
+   - 从误差方差与视野的关系中学习：`w[h] ∝ 1/Var(error[h])`
+
+3. **调查 P5 失败原因:**
+   - 添加日志以验证 EMA 是否正在更新
+   - 测试替代分解（例如，移动平均滤波器）
+
+4. **跨数据集验证:** 在 ETTh1, ETTh2, ECL, Traffic 上测试最佳配置。
+
+### 长期 (研究方向)
+
+1. **重新审视简化设计的 SNMA:**
+   - 既然 CHRC 已经优化，测试最小化的 SNMA（无超网络，仅直接 LoRA 更新）是否能增加价值
+   - 关键约束：不能与 CHRC 修正冲突
+
+2. **替代检索机制:**
+   - 基于注意力的检索代替余弦相似度
+   - 学习的相似度度量（误差预测上的对比学习）
+
+3. **可迁移配置:**
+   - 跨数据集元学习 CHRC 超参数
+   - 目标：基于数据统计信息的零样本配置
+
+4. **理论理解:**
+   - 形式化视野掩码为何有效（误差自相关分析）
    - Characterize when time buckets help vs hurt
 
 ---
 
-## Conclusion
+## 结论
 
-| Dimension | Assessment |
+| 维度 | 评估 |
 |-----------|------------|
-| Goal achievement | ETTm1 ✅ exceeded (0.710 vs target 0.750); Weather partial (1.527 vs target 1.400) |
-| Key lesson | Simple structural priors > complex retrieval mechanics |
-| Biggest surprise | P7 Horizon Mask's large gain reveals error temporal locality |
-| Biggest lesson | P1 Dual-Key failure warns against over-trusting intuition |
+| 目标达成 | ETTm1 ✅ 超额完成 (0.703 vs 目标 0.750, -9.6%); Weather ⚠️ 接近 (1.452 vs 目标 1.400, 差 3.7%) |
+| 关键教训 | 简单的结构先验 > 复杂的检索机制；**组合产生协同效应** |
+| 最大惊喜 | P8 在 Weather 上单独无效，但 P2+P7+P8 组合反而达到最佳 (1.452) |
+| 最大教训 | 单一消融实验可能误导结论，需要验证组合效果 |
 
-**One-line summary:** "Less is more"—the winning improvements are simple decay masks and time isolation, not sophisticated retrieval architectures.
+**一句话总结：** "少即是多，但组合更强"——P2 (软门控) + P7 (视野衰减) + P8 (时间分桶) 的协同效应超越了任何单一改进。

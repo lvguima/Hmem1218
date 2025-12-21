@@ -668,7 +668,6 @@ class CHRC(nn.Module):
             self.key_fusion = None
 
         # Horizon-aware correction mask
-        self.horizon_mask: Optional[torch.Tensor] = None
         if self.use_horizon_mask:
             if self.horizon_mask_mode == 'learned':
                 self.horizon_mask = nn.Parameter(torch.ones(horizon))
@@ -684,6 +683,8 @@ class CHRC(nn.Module):
                 if self.horizon_mask_min > 0:
                     mask = torch.clamp(mask, min=self.horizon_mask_min)
                 self.register_buffer('horizon_mask', mask)
+        else:
+            self.horizon_mask = None
 
         # Error Memory Bank
         self.memory_bank = ErrorMemoryBank(
