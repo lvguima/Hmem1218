@@ -3,8 +3,8 @@ H-Mem: Horizon-Bridging Neural Memory Network for Online Time Series Forecasting
 
 Main module integrating:
 - Frozen backbone with LoRA injection
- - SNMA (Short-term Neural Memory Adapter)
- - CHRC (Cross-Horizon Retrieval Corrector)
+- SNMA (Short-term Neural Memory Adapter)
+- CHRC (Cross-Horizon Retrieval Corrector)
 - Fusion mechanism for combining adaptations
 
 Author: H-Mem Implementation
@@ -118,8 +118,6 @@ class HMem(nn.Module):
                     top_k=self.retrieval_top_k,
                     temperature=getattr(args, 'chrc_temperature', 0.1),
                     aggregation=getattr(args, 'chrc_aggregation', 'softmax'),
-                    retrieval_mode=getattr(args, 'chrc_retrieval_mode', 'topk'),
-                    similarity_mode=getattr(args, 'chrc_similarity_mode', 'cosine'),
                     use_refinement=getattr(args, 'chrc_use_refinement', True),
                     trust_threshold=getattr(args, 'chrc_trust_threshold', 0.5),
                     gate_steepness=getattr(args, 'chrc_gate_steepness', 10.0),
@@ -130,9 +128,7 @@ class HMem(nn.Module):
                     min_similarity=getattr(args, 'chrc_min_similarity', 0.0),
                     forget_decay=getattr(args, 'chrc_forget_decay', 1.0),
                     forget_threshold=getattr(args, 'chrc_forget_threshold', 0.0),
-                    max_age=getattr(args, 'chrc_max_age', 0),
-                    attention_heads=getattr(args, 'chrc_attention_heads', 4),
-                    attention_max_entries=getattr(args, 'chrc_attention_max_entries', 0)
+                    max_age=getattr(args, 'chrc_max_age', 0)
                 )
 
             if self.chrc_use_buckets and self.chrc_bucket_num > 1:
@@ -533,8 +529,6 @@ class HMem(nn.Module):
             'bottleneck_dim': self.bottleneck_dim,
             'memory_capacity': self.memory_capacity,
             'retrieval_top_k': self.retrieval_top_k,
-            'chrc_similarity_mode': getattr(self.args, 'chrc_similarity_mode', 'cosine'),
-            'chrc_retrieval_mode': getattr(self.args, 'chrc_retrieval_mode', 'topk'),
             'pogt_ratio': self.pogt_ratio,
             'pogt_len': self.pogt_len,
             'chrc_feature_dim': self.chrc_feature_dim,

@@ -525,125 +525,161 @@ class Exp_OneNet(Exp_FSNet):
         return loss / 2, outputs
 
 
+# ============================================================================
+# ACL (Adaptive Continual Learning) Methods
+# ============================================================================
+
 class Exp_ACL(Exp_Online):
+    """
+    ACL (Adaptive Continual Learning) Method
+    
+    核心创新：
+    1. Memory Replay: 从长期记忆缓冲区重放样本
+    2. Feature Consistency: 保持编码器特征的一致性
+    3. Hint Distillation: 通过教师模型传递知识
+    
+    论文: "Adaptive Continual Learning for Time Series Forecasting"
+    """
     def __init__(self, args):
         super().__init__(args)
+        
+        # ACL 超参数
         self.buffer_size = getattr(args, 'acl_buffer_size', 500)
         self.soft_buffer_size = getattr(args, 'acl_soft_buffer_size', 50)
         self.alpha = getattr(args, 'acl_alpha', 0.2)
         self.beta = getattr(args, 'acl_beta', 0.2)
         self.gamma = getattr(args, 'acl_gamma', 0.2)
         self.task_interval = getattr(args, 'acl_task_interval', 200)
-
-    def _init_components(self):
-        if hasattr(self, 'memory_buffer'):
-            return
+        
+        print(f"[ACL] Initialized with buffer_size={self.buffer_size}, "
+              f"alpha={self.alpha}, beta={self.beta}, gamma={self.gamma}")
+    
+    def online(self, online_data=None, target_variate=None, phase='test', show_progress=False):
+        """重写online方法，添加ACL特定的初始化"""
         from util.acl_utils import ReservoirBuffer, SoftBuffer
-
+        
+        # 初始化 ACL 组件
         self.memory_buffer = ReservoirBuffer(capacity=self.buffer_size, device=self.device)
         self.soft_buffer = SoftBuffer(capacity=self.soft_buffer_size, device=self.device)
-
+        
+        # 初始化教师模型
         self.teacher_model = copy.deepcopy(self.model)
         self.teacher_model.eval()
         for p in self.teacher_model.parameters():
             p.requires_grad = False
-
+        
         self.step_count = 0
+        
+        # 调用父类online方法
+        return super().online(online_data, target_variate, phase, show_progress)
+    def _init_components(self):
+        """辅助方法：确保组件只被初始化一次"""
+        # 如果已经初始化过，直接返回，防止覆盖之前的状态
+        if hasattr(self, 'memory_buffer'):
+            return
 
+        from util.acl_utils import ReservoirBuffer, SoftBuffer
+        
+        # 初始化 ACL 组件
+        self.memory_buffer = ReservoirBuffer(capacity=self.buffer_size, device=self.device)
+        self.soft_buffer = SoftBuffer(capacity=self.soft_buffer_size, device=self.device)
+        
+        # 初始化教师模型
+        # 注意：这必须在 load_checkpoint 之后调用，_init_components 
+        # 通常在 update_valid 或 online 开始时调用，此时模型权重已加载
+        self.teacher_model = copy.deepcopy(self.model)
+        self.teacher_model.eval()
+        for p in self.teacher_model.parameters():
+            p.requires_grad = False
+        
+        self.step_count = 0
+        print(f"[ACL] Components initialized successfully.")
     def update_valid(self, valid_data=None):
+        """重写 update_valid，确保在验证适应前初始化组件"""
         self._init_components()
         return super().update_valid(valid_data)
 
     def online(self, online_data=None, target_variate=None, phase='test', show_progress=False):
+        """重写 online，确保在测试前初始化组件"""
         self._init_components()
+        # 调用父类 online 方法
         return super().online(online_data, target_variate, phase, show_progress)
-
-    def _forward_with_model(self, model, batch):
-        if not self.args.pin_gpu:
-            batch = [
-                batch[i].to(self.device) if isinstance(batch[i], torch.Tensor) and i != self.label_position else batch[i]
-                for i in range(len(batch))
-            ]
-        inp = self._process_batch(batch)
-        if self.args.use_amp:
-            with torch.cuda.amp.autocast():
-                outputs = model(*inp)
-        else:
-            outputs = model(*inp)
-        return outputs
-
-    def _split_outputs(self, outputs):
+    def _update_online(self, batch, criterion, optimizer, scaler=None):
+        """
+        ACL 在线更新策略
+        
+        Loss = L_current + alpha * L_memory + beta * L_feature + gamma * L_hint
+        """
+        self.model.train()
+        optimizer.zero_grad()
+        
+        # 解包batch
+        batch_x = batch[0].to(self.device)
+        batch_y = batch[1].to(self.device)
+        batch_x_mark = batch[2].to(self.device) if len(batch) > 2 and batch[2] is not None else None
+        
+        # 1. 当前任务损失
+        outputs = self.model(batch_x)
         if isinstance(outputs, (tuple, list)):
-            pred = outputs[0]
-            enc_out = outputs[1] if len(outputs) > 1 else None
+            pred, enc_out = outputs
         else:
             pred = outputs
             enc_out = None
-        return pred, enc_out
-
-    def _concat_optional(self, tensors):
-        if not tensors or all(t is None for t in tensors):
-            return None
-        keep = [t for t in tensors if t is not None]
-        if not keep:
-            return None
-        return torch.cat(keep, dim=0)
-
-    def _update_online(self, batch, criterion, optimizer, scaler=None):
-        if batch[0].dim() != 3:
-            return super()._update_online(batch, criterion, optimizer, scaler)
-
-        self.model.train()
-        optimizer.zero_grad()
-
-        outputs = self._forward_with_model(self.model, batch)
-        pred, enc_out = self._split_outputs(outputs)
-
-        batch_y = batch[1]
-        if not self.args.pin_gpu:
-            batch_y = batch_y.to(self.device)
+        
         loss_current = criterion(pred, batch_y)
-
+        
+        # 2. Memory Replay Loss (从长期记忆中采样)
         loss_memory = torch.tensor(0.0, device=self.device)
         loss_feature = torch.tensor(0.0, device=self.device)
-
+        
+        # 从两个buffer采样
         mem_samples = self.memory_buffer.sample(batch_size=min(16, len(self.memory_buffer)))
         soft_samples = self.soft_buffer.get_data()
-        replay_samples = []
-        if mem_samples is not None:
-            replay_samples.append(mem_samples)
-        if soft_samples is not None:
-            replay_samples.append(soft_samples)
-
-        if replay_samples:
-            r_x = torch.cat([s[0] for s in replay_samples], dim=0)
-            r_y = torch.cat([s[1] for s in replay_samples], dim=0)
-            r_z = torch.cat([s[2] for s in replay_samples], dim=0)
-            r_x_mark = self._concat_optional([s[3] for s in replay_samples])
-            r_y_mark = self._concat_optional([s[4] for s in replay_samples])
-
-            replay_batch = [r_x, r_y]
-            if r_x_mark is not None or r_y_mark is not None:
-                replay_batch.append(r_x_mark)
-                if r_y_mark is not None:
-                    replay_batch.append(r_y_mark)
-
-            r_outputs = self._forward_with_model(self.model, replay_batch)
-            r_pred, r_enc = self._split_outputs(r_outputs)
+        
+        replay_batch = []
+        if mem_samples:
+            replay_batch.append(mem_samples)
+        if soft_samples:
+            replay_batch.append(soft_samples)
+        
+        if replay_batch:
+            # 合并样本
+            r_x = torch.cat([s[0] for s in replay_batch], dim=0).to(self.device)
+            r_y = torch.cat([s[1] for s in replay_batch], dim=0).to(self.device)
+            r_z = torch.cat([s[2] for s in replay_batch], dim=0).to(self.device)  # 旧的encoder特征
+            
+            # 前向传播
+            r_outputs = self.model(r_x)
+            if isinstance(r_outputs, (tuple, list)):
+                r_pred, r_enc = r_outputs
+            else:
+                r_pred = r_outputs
+                r_enc = None
+            
+            # 输出回放损失
             loss_memory = self.alpha * criterion(r_pred, r_y)
+            
+            # 特征一致性损失（如果有encoder输出）
             if r_enc is not None and r_z is not None:
                 loss_feature = self.beta * F.mse_loss(r_enc, r_z)
-
+        
+        # 3. Hint Distillation Loss (从教师模型学习)
         loss_hint = torch.tensor(0.0, device=self.device)
         if enc_out is not None:
             with torch.no_grad():
-                teacher_outputs = self._forward_with_model(self.teacher_model, batch)
-                _, teacher_enc = self._split_outputs(teacher_outputs)
+                teacher_outputs = self.teacher_model(batch_x)
+                if isinstance(teacher_outputs, (tuple, list)):
+                    _, teacher_enc = teacher_outputs
+                else:
+                    teacher_enc = None
+            
             if teacher_enc is not None:
                 loss_hint = self.gamma * F.mse_loss(enc_out, teacher_enc)
-
+        
+        # 4. 总损失
         total_loss = loss_current + loss_memory + loss_feature + loss_hint
-
+        
+        # 反向传播
         if self.args.use_amp and scaler is not None:
             scaler.scale(total_loss).backward()
             scaler.step(optimizer)
@@ -651,101 +687,116 @@ class Exp_ACL(Exp_Online):
         else:
             total_loss.backward()
             optimizer.step()
-
-        batch_x = batch[0]
-        batch_x_mark = batch[2] if len(batch) > 2 else None
-        batch_y_mark = batch[3] if len(batch) > 3 else None
-
-        feature_tensor = enc_out if enc_out is not None else pred.detach()
+        
+        # 5. 更新 Buffer
         with torch.no_grad():
+            # 计算每个样本的损失（用于soft buffer）
             raw_losses = torch.mean((pred - batch_y) ** 2, dim=(1, 2))
-            self.soft_buffer.update(batch_x, batch_y, feature_tensor, raw_losses, x_mark=batch_x_mark, y_mark=batch_y_mark)
-            self.memory_buffer.update(batch_x, batch_y, feature_tensor, x_mark=batch_x_mark, y_mark=batch_y_mark)
-
+            
+            if enc_out is not None:
+                self.soft_buffer.update(batch_x, batch_y, enc_out, raw_losses, t_emb=batch_x_mark)
+                self.memory_buffer.update(batch_x, batch_y, enc_out, t_emb=batch_x_mark)
+        
+        # 6. 周期性更新教师模型
         self.step_count += 1
         if self.step_count % self.task_interval == 0:
             self.teacher_model.load_state_dict(self.model.state_dict())
             self.soft_buffer.clear()
-
+            print(f"[ACL] Teacher model updated at step {self.step_count}")
+        
         return total_loss, pred
 
 
 class Exp_CLSER(Exp_Online):
+    """
+    CLS-ER (Complementary Learning System - Experience Replay)
+    
+    核心创新：
+    1. 双EMA模型：Plastic Model (快速学习) + Stable Model (稳定学习)
+    2. 置信度选择：根据预测误差动态选择教师模型
+    3. 一致性正则：学生模型与选中的教师保持一致
+    
+    论文: "Learning Fast, Learning Slow: A General Continual Learning Method 
+           based on Complementary Learning System" (ICLR 2022)
+    """
     def __init__(self, args):
         super().__init__(args)
+        
+        # CLS-ER 超参数
         self.buffer_size = getattr(args, 'clser_buffer_size', 500)
         self.reg_weight = getattr(args, 'clser_reg_weight', 0.15)
-
+        
+        print(f"[CLS-ER] Initialized with buffer_size={self.buffer_size}, "
+              f"reg_weight={self.reg_weight}")
+    
     def _init_components(self):
+        """辅助方法：确保组件只被初始化一次"""
         if hasattr(self, 'clser_buffer'):
             return
+            
         from util.clser_utils import CLSER_Manager, CLSER_Buffer
-
+        
+        # 初始化 CLS-ER 管理器（包含双EMA模型）
         self.clser_manager = CLSER_Manager(self.model, self.args, self.device)
+        
+        # 初始化 Buffer
         self.clser_buffer = CLSER_Buffer(capacity=self.buffer_size, device=self.device)
+        print(f"[CLS-ER] Components initialized successfully.")
 
     def update_valid(self, valid_data=None):
+        """重写 update_valid，确保在验证适应前初始化组件"""
         self._init_components()
         return super().update_valid(valid_data)
 
     def online(self, online_data=None, target_variate=None, phase='test', show_progress=False):
+        """重写online方法，确保在测试前初始化组件"""
         self._init_components()
+        # 调用父类online方法
         return super().online(online_data, target_variate, phase, show_progress)
-
-    def _forward_with_model(self, model, batch):
-        if not self.args.pin_gpu:
-            batch = [
-                batch[i].to(self.device) if isinstance(batch[i], torch.Tensor) and i != self.label_position else batch[i]
-                for i in range(len(batch))
-            ]
-        inp = self._process_batch(batch)
-        if self.args.use_amp:
-            with torch.cuda.amp.autocast():
-                outputs = model(*inp)
-        else:
-            outputs = model(*inp)
-        return outputs
-
-    def _split_outputs(self, outputs):
+    
+    def _update_online(self, batch, criterion, optimizer, scaler=None):
+        """
+        CLS-ER 在线更新策略
+        
+        Loss = L_current + lambda * L_consistency
+        """
+        self.model.train()
+        optimizer.zero_grad()
+        
+        # 解包batch
+        batch_x = batch[0].to(self.device)
+        batch_y = batch[1].to(self.device)
+        
+        # 1. 当前任务损失
+        outputs = self.model(batch_x)
         if isinstance(outputs, (tuple, list)):
             pred = outputs[0]
         else:
             pred = outputs
-        return pred
-
-    def _update_online(self, batch, criterion, optimizer, scaler=None):
-        if batch[0].dim() != 3:
-            return super()._update_online(batch, criterion, optimizer, scaler)
-
-        self.model.train()
-        optimizer.zero_grad()
-
-        outputs = self._forward_with_model(self.model, batch)
-        pred = self._split_outputs(outputs)
-
-        batch_y = batch[1]
-        if not self.args.pin_gpu:
-            batch_y = batch_y.to(self.device)
+        
         loss_current = criterion(pred, batch_y)
-
+        
+        # 2. 一致性正则损失（从buffer采样）
         loss_consistency = torch.tensor(0.0, device=self.device)
+        
         if not self.clser_buffer.is_empty():
-            buffer_x, buffer_y, buffer_x_mark, buffer_y_mark = self.clser_buffer.sample(
+            # 从buffer采样
+            buffer_x, buffer_y, buffer_t_emb = self.clser_buffer.sample(
                 batch_size=min(self.args.batch_size, len(self.clser_buffer.buffer))
             )
+            
             if buffer_x is not None:
+                # 转换为batch格式
                 buffer_batch = [buffer_x, buffer_y]
-                if buffer_x_mark is not None or buffer_y_mark is not None:
-                    buffer_batch.append(buffer_x_mark)
-                    if buffer_y_mark is not None:
-                        buffer_batch.append(buffer_y_mark)
-                loss_consistency = self.clser_manager.compute_consistency_loss(
-                    buffer_batch, forward_fn=self._forward_with_model
-                )
+                
+                # 计算一致性损失
+                loss_consistency = self.clser_manager.compute_consistency_loss(buffer_batch)
                 loss_consistency = self.clser_manager.reg_weight * loss_consistency
-
+        
+        # 3. 总损失
         total_loss = loss_current + loss_consistency
-
+        
+        # 反向传播
         if self.args.use_amp and scaler is not None:
             scaler.scale(total_loss).backward()
             scaler.step(optimizer)
@@ -753,118 +804,136 @@ class Exp_CLSER(Exp_Online):
         else:
             total_loss.backward()
             optimizer.step()
-
-        batch_x = batch[0]
-        batch_x_mark = batch[2] if len(batch) > 2 else None
-        batch_y_mark = batch[3] if len(batch) > 3 else None
+        
+        # 4. 更新Buffer
         with torch.no_grad():
-            self.clser_buffer.update(batch_x, batch_y, x_mark=batch_x_mark, y_mark=batch_y_mark)
-
+            self.clser_buffer.update(batch_x, batch_y, t_emb=None)
+        
+        # 5. 更新双EMA模型
         self.clser_manager.maybe_update_ema_models()
+        
         return total_loss, pred
 
 
 class Exp_MIR(Exp_Online):
+    """
+    MIR (Maximally Interfered Retrieval)
+    
+    核心创新：
+    - 不是随机采样buffer样本，而是选择受当前梯度更新负面影响最大的样本
+    - 通过虚拟参数更新计算干扰分数
+    - 选择top-K最大干扰样本进行回放
+    
+    论文: "Online Continual Learning with Maximal Interfered Retrieval" (NeurIPS 2019)
+    """
     def __init__(self, args):
         super().__init__(args)
+        
+        # MIR 超参数
         self.buffer_size = getattr(args, 'mir_buffer_size', 500)
         self.mir_subsample = getattr(args, 'mir_subsample', 500)
         self.mir_k = getattr(args, 'mir_k', 50)
-
+        
+        print(f"[MIR] Initialized with buffer_size={self.buffer_size}, "
+              f"subsample={self.mir_subsample}, k={self.mir_k}")
+    
     def _init_components(self):
+        """辅助方法：确保组件只被初始化一次"""
         if hasattr(self, 'mir_buffer'):
             return
+            
         from util.mir_utils import MIR_Buffer
-
+        
+        # 初始化 MIR Buffer（包含MIR采样器）
         self.mir_buffer = MIR_Buffer(
             buffer_size=self.buffer_size,
             device=self.device,
-            args=self.args,
+            args=self.args
         )
+        print(f"[MIR] Components initialized successfully.")
 
     def update_valid(self, valid_data=None):
+        """重写 update_valid，确保在验证适应前初始化组件"""
         self._init_components()
         return super().update_valid(valid_data)
-
+    
     def online(self, online_data=None, target_variate=None, phase='test', show_progress=False):
+        """重写online方法，确保在测试前初始化组件"""
         self._init_components()
+        # 调用父类online方法
         return super().online(online_data, target_variate, phase, show_progress)
-
-    def _forward_with_model(self, model, batch):
-        if not self.args.pin_gpu:
-            batch = [
-                batch[i].to(self.device) if isinstance(batch[i], torch.Tensor) and i != self.label_position else batch[i]
-                for i in range(len(batch))
-            ]
-        inp = self._process_batch(batch)
-        if self.args.use_amp:
-            with torch.cuda.amp.autocast():
-                outputs = model(*inp)
-        else:
-            outputs = model(*inp)
-        return outputs
-
-    def _split_outputs(self, outputs):
+    
+    def _update_online(self, batch, criterion, optimizer, scaler=None):
+        """
+        MIR 在线更新策略
+        
+        步骤：
+        1. 计算当前批次损失并backward（不step）
+        2. 使用MIR策略从buffer选择最大干扰样本
+        3. 在MIR样本上计算损失并backward
+        4. optimizer.step()更新参数
+        """
+        self.model.train()
+        optimizer.zero_grad()
+        
+        # 解包batch
+        batch_x = batch[0].to(self.device)
+        batch_y = batch[1].to(self.device)
+        
+        # 1. 当前任务损失（计算梯度但不更新）
+        outputs = self.model(batch_x)
         if isinstance(outputs, (tuple, list)):
             pred = outputs[0]
         else:
             pred = outputs
-        return pred
-
-    def _update_online(self, batch, criterion, optimizer, scaler=None):
-        if batch[0].dim() != 3:
-            return super()._update_online(batch, criterion, optimizer, scaler)
-
-        self.model.train()
-        optimizer.zero_grad()
-
-        outputs = self._forward_with_model(self.model, batch)
-        pred = self._split_outputs(outputs)
-
-        batch_y = batch[1]
-        if not self.args.pin_gpu:
-            batch_y = batch_y.to(self.device)
+        
         loss_current = criterion(pred, batch_y)
-
+        
+        # 重要：计算梯度（MIR需要用来计算干扰分数）
         if self.args.use_amp and scaler is not None:
             scaler.scale(loss_current).backward()
         else:
             loss_current.backward()
-
+        
+        # 2. MIR回放损失
         loss_mir = torch.tensor(0.0, device=self.device)
+        
         if not self.mir_buffer.is_empty():
+            # 使用MIR策略采样（选择最大干扰样本）
             mir_batch = self.mir_buffer.get_data_with_mir(
-                self.model,
-                criterion,
-                batch_size=min(16, self.buffer_size),
-                forward_fn=self._forward_with_model,
+                self.model, criterion, batch_size=min(16, self.buffer_size)
             )
+            
             if mir_batch is not None and len(mir_batch) > 0:
-                mir_outputs = self._forward_with_model(self.model, mir_batch)
-                mir_pred = self._split_outputs(mir_outputs)
-                mir_y = mir_batch[1]
+                mir_x = mir_batch[0].to(self.device)
+                mir_y = mir_batch[1].to(self.device)
+                
+                # 在MIR样本上计算损失
+                mir_outputs = self.model(mir_x)
+                if isinstance(mir_outputs, (tuple, list)):
+                    mir_pred = mir_outputs[0]
+                else:
+                    mir_pred = mir_outputs
+                
                 loss_mir = criterion(mir_pred, mir_y)
+                
+                # 计算MIR梯度
                 if self.args.use_amp and scaler is not None:
                     scaler.scale(loss_mir).backward()
                 else:
                     loss_mir.backward()
-
+        
+        # 3. 参数更新（包含当前批次 + MIR样本的梯度）
         if self.args.use_amp and scaler is not None:
             scaler.step(optimizer)
             scaler.update()
         else:
             optimizer.step()
-
-        batch_x = batch[0]
-        batch_x_mark = batch[2] if len(batch) > 2 else None
-        batch_y_mark = batch[3] if len(batch) > 3 else None
+        
+        # 4. 更新Buffer
         with torch.no_grad():
-            buffer_items = [batch_x, batch_y]
-            if batch_x_mark is not None:
-                buffer_items.append(batch_x_mark)
-            if batch_y_mark is not None:
-                buffer_items.append(batch_y_mark)
-            self.mir_buffer.add_data(*buffer_items)
-
+            self.mir_buffer.add_data(batch_x, batch_y)
+        
         total_loss = loss_current + loss_mir
         return total_loss, pred
+

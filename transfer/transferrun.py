@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import gc
-import os
 
 import settings
 from data_provider import data_loader
@@ -29,22 +28,6 @@ def str_to_bool(value):
     raise ValueError(f'{value} is not a valid boolean value')
 
 
-def resolve_checkpoint_path(args):
-    base_dir = args.checkpoints if getattr(args, 'checkpoints', None) else './checkpoints/'
-    # 按数据集/模型名组织checkpoint目录
-    checkpoint_dir = os.path.join(base_dir, args.dataset, args.model)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    return os.path.join(checkpoint_dir, 'checkpoint.pth')
-
-
-def resolve_checkpoint_path(args):
-    base_dir = args.checkpoints if getattr(args, 'checkpoints', None) else './checkpoints/'
-    # 按数据集/模型名组织checkpoint目录
-    checkpoint_dir = os.path.join(base_dir, args.dataset, args.model)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    return os.path.join(checkpoint_dir, 'checkpoint.pth')
-
-
 parser = argparse.ArgumentParser()
 
 # basic config
@@ -55,7 +38,7 @@ parser.add_argument('--wo_valid', action='store_true', default=False, help='only
 # parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
 parser.add_argument('--only_test', action='store_true', default=False)
 parser.add_argument('--do_valid', action='store_true', default=False)
-parser.add_argument('--model', type=str, required=False, default='iTransformer')
+parser.add_argument('--model', type=str, required=True, default='PatchTST')
 parser.add_argument('--override_hyper', action='store_true', default=True, help='Override hyperparams by setting.py')
 parser.add_argument('--compile', action='store_true', default=False, help='Compile the model by Pytorch 2.0')
 parser.add_argument('--reduce_bs', type=str_to_bool, default=False,
@@ -67,14 +50,14 @@ parser.add_argument('--tag', type=str, default='')
 # online
 parser.add_argument('--online_method', type=str, default=None)
 parser.add_argument('--skip', type=str, default=None)
-parser.add_argument('--online_learning_rate', type=float, default=0.0001)
+parser.add_argument('--online_learning_rate', type=float, default=None)
 parser.add_argument('--val_online_lr', action='store_true', default=True)
 parser.add_argument('--diff_online_lr', action='store_true', default=False)
 parser.add_argument('--save_opt', action='store_true', default=True)
 parser.add_argument('--leakage', action='store_true', default=False)
 parser.add_argument('--debug', action='store_true', default=False)
 parser.add_argument('--pretrain', action='store_true', default=False)
-parser.add_argument('--freeze', type=str_to_bool, default=False, help='Freeze backbone weights')
+parser.add_argument('--freeze', action='store_true', default=False)
 
 # Proceed
 parser.add_argument('--act', type=str, default='sigmoid', help='activation')
@@ -93,86 +76,10 @@ parser.add_argument('--wo_clip', action='store_true', default=False)
 parser.add_argument('--learning_rate_w', type=float, default=0.001, help='optimizer learning rate')
 parser.add_argument('--learning_rate_bias', type=float, default=0.001, help='optimizer learning rate')
 
-# H-Mem (LoRA)
-parser.add_argument('--lora_rank', type=int, default=8, help='LoRA rank')
-parser.add_argument('--lora_alpha', type=float, default=16.0, help='LoRA alpha (scaling factor)')
-parser.add_argument('--lora_dropout', type=float, default=0.0, help='LoRA dropout')
-parser.add_argument('--lora_ema_decay', type=float, default=0.0,
-                    help='EMA decay for LoRA params (0 disables smoothing)')
-
-# H-Mem (Neural Memory)
-parser.add_argument('--memory_dim', type=int, default=256, help='Neural memory dimension')
-parser.add_argument('--memory_momentum', type=float, default=0.9, help='Momentum for surprise running stats')
-parser.add_argument('--memory_num_heads', type=int, default=4, help='Number of heads for memory read attention')
-parser.add_argument('--hmem_share_pogt', type=str_to_bool, default=False,
-                    help='Share POGT representation between SNMA and CHRC')
-
-# H-Mem (CHRC)
-parser.add_argument('--memory_capacity', type=int, default=1000, help='Error memory bank capacity')
-parser.add_argument('--retrieval_top_k', type=int, default=5, help='Top-K retrieval for error correction')
-parser.add_argument('--chrc_feature_dim', type=int, default=128, help='CHRC POGT encoding dimension')
-parser.add_argument('--chrc_temperature', type=float, default=0.1, help='Temperature for CHRC aggregation')
-parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Aggregation method for CHRC')
-parser.add_argument('--chrc_use_refinement', type=str_to_bool, default=True, help='Use refinement network in CHRC')
-parser.add_argument('--chrc_trust_threshold', type=float, default=0.5,
-                    help='Similarity trust threshold for CHRC soft gating')
-parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
-                    help='Steepness for CHRC soft gating')
-parser.add_argument('--chrc_use_horizon_mask', type=str_to_bool, default=True,
-                    help='Apply horizon-aware correction mask')
-parser.add_argument('--chrc_horizon_mask_mode', type=str, default='exp',
-                    help='Horizon mask mode: exp, linear, or learned')
-parser.add_argument('--chrc_horizon_mask_decay', type=float, default=0.98,
-                    help='Decay factor for exp horizon mask')
-parser.add_argument('--chrc_horizon_mask_min', type=float, default=0.2,
-                    help='Minimum weight for horizon mask')
-parser.add_argument('--chrc_use_buckets', type=str_to_bool, default=True,
-                    help='Enable time-aware CHRC memory buckets')
-parser.add_argument('--chrc_bucket_num', type=int, default=4,
-                    help='Number of CHRC buckets when time-aware buckets are enabled')
-parser.add_argument('--chrc_min_similarity', type=float, default=0.0,
-                    help='Deprecated: minimum absolute similarity for CHRC retrieval (use soft gate instead)')
-parser.add_argument('--chrc_forget_decay', type=float, default=1.0,
-                    help='Decay factor for CHRC memory importance (<=1.0)')
-parser.add_argument('--chrc_forget_threshold', type=float, default=0.0,
-                    help='Drop CHRC memory entries below this importance threshold')
-parser.add_argument('--chrc_max_age', type=int, default=0,
-                    help='Drop CHRC memory entries older than this many steps (0 disables)')
-
-# H-Mem (General)
-parser.add_argument('--pogt_ratio', type=float, default=0.5, help='POGT ratio')
-parser.add_argument('--hmem_pogt_source', type=str, default='batch_x',
-                    help='POGT source for H-Mem: batch_x (causal) or batch_y (leaky)')
-parser.add_argument('--hmem_warmup_steps', type=int, default=100, help='SNMA warmup steps')
-parser.add_argument('--hmem_joint_training', type=str_to_bool, default=True, help='Enable joint SNMA+CHRC training')
-parser.add_argument('--use_snma', type=str_to_bool, default=False, help='Use SNMA (neural memory adapter)')
-parser.add_argument('--use_chrc', type=str_to_bool, default=True, help='Use CHRC (retrieval corrector)')
-
-# ACL
-parser.add_argument('--acl_buffer_size', type=int, default=500)
-parser.add_argument('--acl_soft_buffer_size', type=int, default=50)
-parser.add_argument('--acl_alpha', type=float, default=0.2)
-parser.add_argument('--acl_beta', type=float, default=0.2)
-parser.add_argument('--acl_gamma', type=float, default=0.2)
-parser.add_argument('--acl_task_interval', type=int, default=200)
-
-# CLS-ER
-parser.add_argument('--clser_buffer_size', type=int, default=500)
-parser.add_argument('--clser_reg_weight', type=float, default=0.15)
-parser.add_argument('--clser_plastic_update_freq', type=float, default=0.9)
-parser.add_argument('--clser_plastic_alpha', type=float, default=0.999)
-parser.add_argument('--clser_stable_update_freq', type=float, default=0.7)
-parser.add_argument('--clser_stable_alpha', type=float, default=0.999)
-
-# MIR
-parser.add_argument('--mir_buffer_size', type=int, default=500)
-parser.add_argument('--mir_subsample', type=int, default=500)
-parser.add_argument('--mir_k', type=int, default=50)
-
 # data loader
 parser.add_argument('--border_type', type=str, default='online', help='set any other value for traditional data splits')
 parser.add_argument('--root_path', type=str, default='./dataset/', help='root path of the data file')
-parser.add_argument('--dataset', type=str, default='ETTh2', help='data file')
+parser.add_argument('--dataset', type=str, default='ETTh1', help='data file')
 parser.add_argument('--features', type=str, default='M',
                     help='forecasting task, options:[M, S, MS]; M:multivariate predict multivariate, S:univariate predict univariate, MS:multivariate predict univariate')
 parser.add_argument('--target', type=str, default='OT', help='target feature in S or MS task')
@@ -184,7 +91,7 @@ parser.add_argument('--pin_gpu', type=str_to_bool, default=True)
 # forecasting task
 parser.add_argument('--seq_len', type=int, default=96, help='input sequence length')
 parser.add_argument('--label_len', type=int, default=48, help='start token length')
-parser.add_argument('--pred_len', type=int, default=24, help='prediction sequence length')
+parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
 
 # DLinear
 parser.add_argument('--individual', action='store_true', default=False,
@@ -272,6 +179,27 @@ parser.add_argument('--lambda_period', type=float, default=0.1)
 parser.add_argument('--whole_model', action='store_true')
 parser.add_argument('--continual', action='store_true')
 
+# ACL (Adaptive Continual Learning)
+parser.add_argument('--acl_buffer_size', type=int, default=500, help='ACL: capacity of memory buffer')
+parser.add_argument('--acl_soft_buffer_size', type=int, default=50, help='ACL: capacity of soft memory buffer')
+parser.add_argument('--acl_alpha', type=float, default=0.2, help='ACL: weight for memory replay loss')
+parser.add_argument('--acl_beta', type=float, default=0.2, help='ACL: weight for feature consistency loss')
+parser.add_argument('--acl_gamma', type=float, default=0.2, help='ACL: weight for hint distillation loss')
+parser.add_argument('--acl_task_interval', type=int, default=200, help='ACL: steps between teacher model updates')
+
+# CLS-ER (Complementary Learning System - Experience Replay)
+parser.add_argument('--clser_buffer_size', type=int, default=500, help='CLS-ER: capacity of buffer')
+parser.add_argument('--clser_reg_weight', type=float, default=0.15, help='CLS-ER: weight for consistency regularization loss')
+parser.add_argument('--clser_plastic_update_freq', type=float, default=0.9, help='CLS-ER: update frequency for plastic model')
+parser.add_argument('--clser_plastic_alpha', type=float, default=0.999, help='CLS-ER: EMA coefficient for plastic model')
+parser.add_argument('--clser_stable_update_freq', type=float, default=0.7, help='CLS-ER: update frequency for stable model')
+parser.add_argument('--clser_stable_alpha', type=float, default=0.999, help='CLS-ER: EMA coefficient for stable model')
+
+# MIR (Maximally Interfered Retrieval)
+parser.add_argument('--mir_buffer_size', type=int, default=500, help='MIR: capacity of memory buffer')
+parser.add_argument('--mir_subsample', type=int, default=500, help='MIR: number of buffer samples to compute interference scores')
+parser.add_argument('--mir_k', type=int, default=50, help='MIR: select top-K samples with highest interference')
+
 args = parser.parse_args()
 
 args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
@@ -302,10 +230,6 @@ if args.model.endswith('_leak'):
 if args.online_method and args.online_method.endswith('_leak'):
     args.online_method = args.online_method[:-len('_leak')]
     args.leakage = True
-
-# Treat textual "none"/"null"/"false"/"0" as no online method
-if args.online_method and args.online_method.lower() in ['none', 'null', 'false', '0', 'no']:
-    args.online_method = None
 
 if args.tag and args.tag[0] != '_':
     args.tag = '_' + args.tag
@@ -385,8 +309,12 @@ if args.model in settings.need_x_mark:
 args.find_unused_parameters = args.model in ['MTGNN']
 
 data_name = args.data_path.split("/")[-1].split(".")[0]
-# 使用当前工作目录，不再强制使用D盘
-path = './'
+if platform.system() != 'Windows':
+    path = './'
+else:
+    path = 'D:/data/'
+    if args.checkpoints:
+        args.checkpoints = 'D:/checkpoints/'
 
 if args.online_method:
     flag = args.online_method.lower()
@@ -423,8 +351,6 @@ if args.online_method:
             flag += '_noclip'
 else:
     flag = args.border_type if args.border_type else args.data
-
-args.checkpoint_path = resolve_checkpoint_path(args)
 
 print('Args in experiment:')
 print(args)
@@ -508,7 +434,10 @@ if __name__ == '__main__':
                 args.distil,
                 args.des, ii)
             args.pred_path = os.path.join('./results/', pretrain_setting, 'real_prediction.npy')
-            args.load_path = args.checkpoint_path
+            if platform.system() == 'Windows':
+                args.load_path = os.path.join('D://checkpoints/', pretrain_setting, 'checkpoint.pth')
+            else:
+                args.load_path = os.path.join('./checkpoints/', pretrain_setting, 'checkpoint.pth')
         exp = Exp(args)  # set experiments
 
         if train_data is None:
@@ -519,8 +448,8 @@ if __name__ == '__main__':
                 settings.drop_last_PatchTST(args) # SOLID dropout the last when data split = 7:2:1
         exp.wrap_data_kwargs['borders'] = args.borders
 
-        path = args.checkpoint_path
-        if args.online_method not in ['Online', 'SOLID', 'ER', 'DERpp', 'HMem', 'ACL', 'CLSER', 'MIR']:
+        path = os.path.join(args.checkpoints, setting, 'checkpoint.pth')
+        if args.online_method not in ['Online', 'SOLID', 'ER', 'DERpp']:
             print('Checkpoints in', path)
             if (args.only_test or args.do_valid) and os.path.exists(path):
                 print('Loading', path)
@@ -561,7 +490,7 @@ if __name__ == '__main__':
                     torch.cuda.empty_cache()
                     gc.collect()
                     exp.update_valid()
-                mse, mae, test_data = exp.online(test_data, show_progress=True)
+                mse, mae, test_data = exp.online(test_data)
             else:
                 mse, mae, test_data, test_loader = exp.test(setting, test_data, test_loader)
             all_results['mse'].append(mse)
