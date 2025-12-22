@@ -130,6 +130,8 @@ parser.add_argument('--chrc_forget_threshold', type=float, default=0.0,
                     help='Drop CHRC memory entries below this importance threshold')
 parser.add_argument('--chrc_max_age', type=int, default=0,
                     help='Drop CHRC memory entries older than this many steps (0 disables)')
+parser.add_argument('--chrc_log_stride', type=int, default=10,
+                    help='Log CHRC analysis data every N steps during test (<=0 disables)')
 
 # H-Mem (General)
 parser.add_argument('--pogt_ratio', type=float, default=0.5, help='POGT ratio')

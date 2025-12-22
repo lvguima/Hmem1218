@@ -22,17 +22,17 @@
 - **X轴**: Base prediction MSE (无修正)
 - **Y轴**: Corrected prediction MSE (修正后)
 - **参考线**: y=x对角线
-- **输出**: `chrc_scatter.csv`（columns: sample_id, mse_base, mse_corrected）
+- **输出**: `chrc_scatter.csv`（columns: step, horizon, mse_base, mse_corrected）
 - **目的**: 点在对角线下方 → 修正有效
 
 ### 2.2 修正幅度分布
 - **数据**: ||correction||₂ 的分布
-- **输出**: `correction_norm.csv`（columns: sample_id, correction_norm）
+- **输出**: `correction_norm.csv`（columns: step, horizon, correction_norm）
 - **目的**: 展示大部分为小修正，少数大修正
 
 ### 2.3 检索相似度分布
 - **数据**: top-k检索的cosine similarity
-- **输出**: `retrieval_similarity.csv`（columns: sample_id, rank, cosine_sim）
+- **输出**: `retrieval_similarity.csv`（columns: step, mean_similarity）
 - **目的**: 高相似度说明检索质量好
 
 ---

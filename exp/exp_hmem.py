@@ -25,6 +25,7 @@ from adapter.hmem import HMem, build_hmem
 from data_provider.data_factory import get_dataset, get_dataloader
 from data_provider.data_loader import Dataset_Recent
 from util.online_curve import save_online_curve_csv
+from util.chrc_logging import open_chrc_logs, close_chrc_logs, log_chrc_step
 
 
 class Exp_HMem(Exp_Online):
@@ -496,92 +497,123 @@ class Exp_HMem(Exp_Online):
             dynamic_ncols=True,   # Adjust columns dynamically
         )
 
-        # Training loop
-        for i, (recent_batch, current_batch) in enumerate(pbar):
-            self._current_step = i
-            pogt_for_pred = None
+        log_stride = int(getattr(self.args, 'chrc_log_stride', 10))
+        log_chrc = (
+            phase == 'test'
+            and self.args.local_rank <= 0
+            and self.use_chrc
+            and log_stride > 0
+        )
+        chrc_logs = open_chrc_logs(self.args, method_name='hmem') if log_chrc else None
 
-            # Phase switching: warmup → joint training
-            if self._warmup_phase and i >= self.warmup_steps:
-                self._warmup_phase = False
-                if self.joint_training and self.use_chrc and self.use_snma:
-                    model.freeze_chrc(False)
-                    if self.args.local_rank <= 0:
-                        pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Enabling joint SNMA + CHRC training.")
-                elif self.use_chrc and not self.use_snma:
-                    model.freeze_chrc(False)
-                    if self.args.local_rank <= 0:
-                        pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Using CHRC only (SNMA disabled).")
-                elif self.use_snma and not self.use_chrc:
-                    if self.args.local_rank <= 0:
-                        pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Using SNMA only (CHRC disabled).")
-                else:
-                    if self.args.local_rank <= 0:
-                        pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Both SNMA and CHRC disabled.")
+        try:
+            # Training loop
+            for i, (recent_batch, current_batch) in enumerate(pbar):
+                self._current_step = i
+                pogt_for_pred = None
 
-            # During warmup, only train SNMA
-            if self._warmup_phase and self.use_chrc:
-                model.freeze_chrc(True)
+                # Phase switching: warmup -> joint training
+                if self._warmup_phase and i >= self.warmup_steps:
+                    self._warmup_phase = False
+                    if self.joint_training and self.use_chrc and self.use_snma:
+                        model.freeze_chrc(False)
+                        if self.args.local_rank <= 0:
+                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
+                                       f"Enabling joint SNMA + CHRC training.")
+                    elif self.use_chrc and not self.use_snma:
+                        model.freeze_chrc(False)
+                        if self.args.local_rank <= 0:
+                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
+                                       f"Using CHRC only (SNMA disabled).")
+                    elif self.use_snma and not self.use_chrc:
+                        if self.args.local_rank <= 0:
+                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
+                                       f"Using SNMA only (CHRC disabled).")
+                    else:
+                        if self.args.local_rank <= 0:
+                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
+                                       f"Both SNMA and CHRC disabled.")
 
-            # Update model with recent observed data
-            if recent_batch is not None:
-                loss = self._update_online(recent_batch, criterion, optimizer, scaler=None)
-                losses.append(loss)
+                # During warmup, only train SNMA
+                if self._warmup_phase and self.use_chrc:
+                    model.freeze_chrc(True)
 
-                # Process delayed memory bank updates
-                recent_x, recent_y, _, _ = recent_batch
-                if len(self.pending_updates) > 0:
-                    self._process_delayed_updates(i, recent_y[:, -self.args.pred_len:, :])
+                # Update model with recent observed data
+                if recent_batch is not None:
+                    loss = self._update_online(recent_batch, criterion, optimizer, scaler=None)
+                    losses.append(loss)
 
-                # Build POGT for prediction from selected source (default: batch_x)
-                recent_x = recent_x.float().to(self.device)
-                recent_y = recent_y.float().to(self.device)
-                pogt_source = recent_x if self.pogt_source == 'batch_x' else recent_y
-                pogt_for_pred = self._extract_pogt(pogt_source, full_gt=False)
+                    # Process delayed memory bank updates
+                    recent_x, recent_y, _, _ = recent_batch
+                    if len(self.pending_updates) > 0:
+                        self._process_delayed_updates(i, recent_y[:, -self.args.pred_len:, :])
 
-            # Make prediction for current window
-            with torch.no_grad():
-                model.eval()
-                batch_x, batch_y, batch_x_mark, batch_y_mark = current_batch
-                batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float().to(self.device)
+                    # Build POGT for prediction from selected source (default: batch_x)
+                    recent_x = recent_x.float().to(self.device)
+                    recent_y = recent_y.float().to(self.device)
+                    pogt_source = recent_x if self.pogt_source == 'batch_x' else recent_y
+                    pogt_for_pred = self._extract_pogt(pogt_source, full_gt=False)
 
-                if batch_x_mark is not None:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
+                # Make prediction for current window
+                with torch.no_grad():
+                    model.eval()
+                    batch_x, batch_y, batch_x_mark, batch_y_mark = current_batch
+                    batch_x = batch_x.float().to(self.device)
+                    batch_y = batch_y.float().to(self.device)
 
-                # Use POGT from observed recent batch only
-                pogt = pogt_for_pred
+                    if batch_x_mark is not None:
+                        batch_x_mark = batch_x_mark.float().to(self.device)
 
-                # Predict
-                pred = model(batch_x, batch_x_mark, pogt=pogt, return_components=False)
+                    # Use POGT from observed recent batch only
+                    pogt = pogt_for_pred
 
-                model.train()
+                    if log_chrc and (i % log_stride == 0):
+                        outputs = model(batch_x, batch_x_mark, pogt=pogt, return_components=True)
+                        pred = outputs['prediction']
+                        base_pred = outputs.get('base_prediction')
+                        details = outputs.get('chrc_details', None)
+                        true = batch_y[:, -self.args.pred_len:, :]
+                        similarities = details.get('similarities') if details else None
+                        valid_mask = details.get('valid_mask') if details else None
+                        log_chrc_step(
+                            chrc_logs,
+                            step=i,
+                            base_pred=base_pred,
+                            pred=pred,
+                            true=true,
+                            similarities=similarities,
+                            valid_mask=valid_mask
+                        )
+                    else:
+                        pred = model(batch_x, batch_x_mark, pogt=pogt, return_components=False)
 
-            # Collect predictions and ground truths
-            preds.append(pred.detach().cpu().numpy())
-            trues.append(batch_y[:, -self.args.pred_len:, :].detach().cpu().numpy())
+                    model.train()
 
-            # Update progress bar postfix every print_interval steps
-            if (i + 1) % print_interval == 0 and self.args.local_rank <= 0:
-                avg_loss = np.mean(losses[-print_interval:]) if losses else 0
-                recent_preds = np.concatenate(preds[-print_interval:], axis=0)
-                recent_trues = np.concatenate(trues[-print_interval:], axis=0)
-                running_mse = np.mean((recent_preds - recent_trues) ** 2)
-                pbar.set_postfix(
-                    step=i + 1,
-                    loss=f"{avg_loss:.3f}",
-                    mse=f"{running_mse:.3f}"
-                )
+                # Collect predictions and ground truths
+                preds.append(pred.detach().cpu().numpy())
+                trues.append(batch_y[:, -self.args.pred_len:, :].detach().cpu().numpy())
 
-            # Step scheduler
-            if scheduler is not None:
-                scheduler.step()
+                # Update progress bar postfix every print_interval steps
+                if (i + 1) % print_interval == 0 and self.args.local_rank <= 0:
+                    avg_loss = np.mean(losses[-print_interval:]) if losses else 0
+                    recent_preds = np.concatenate(preds[-print_interval:], axis=0)
+                    recent_trues = np.concatenate(trues[-print_interval:], axis=0)
+                    running_mse = np.mean((recent_preds - recent_trues) ** 2)
+                    pbar.set_postfix(
+                        step=i + 1,
+                        loss=f"{avg_loss:.3f}",
+                        mse=f"{running_mse:.3f}"
+                    )
+
+                # Step scheduler
+                if scheduler is not None:
+                    scheduler.step()
+        finally:
+            if chrc_logs is not None:
+                close_chrc_logs(chrc_logs)
 
         # Aggregate results
+
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
 
