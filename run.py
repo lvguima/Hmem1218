@@ -110,6 +110,14 @@ parser.add_argument('--hmem_share_pogt', type=str_to_bool, default=False,
 # H-Mem (CHRC)
 parser.add_argument('--memory_capacity', type=int, default=1000, help='Error memory bank capacity')
 parser.add_argument('--retrieval_top_k', type=int, default=5, help='Top-K retrieval for error correction')
+parser.add_argument('--chrc_similarity_mode', type=str, default='cosine',
+                    help='Similarity mode for CHRC: cosine or bilinear')
+parser.add_argument('--chrc_retrieval_mode', type=str, default='topk',
+                    help='Retrieval mode for CHRC: topk or attention')
+parser.add_argument('--chrc_attention_heads', type=int, default=4,
+                    help='Number of heads for attention-based retrieval')
+parser.add_argument('--chrc_attention_max_entries', type=int, default=0,
+                    help='Max entries for attention retrieval (0 uses all)')
 parser.add_argument('--chrc_feature_dim', type=int, default=128, help='CHRC POGT encoding dimension')
 parser.add_argument('--chrc_temperature', type=float, default=0.1, help='Temperature for CHRC aggregation')
 parser.add_argument('--chrc_aggregation', type=str, default='softmax', help='Aggregation method for CHRC')
@@ -146,10 +154,6 @@ parser.add_argument('--hmem_pogt_source', type=str, default='batch_x',
 parser.add_argument('--hmem_warmup_steps', type=int, default=100, help='SNMA warmup steps')
 parser.add_argument('--hmem_joint_training', type=str_to_bool, default=True, help='Enable joint SNMA+CHRC training')
 parser.add_argument('--use_snma', type=str_to_bool, default=False, help='Use SNMA (neural memory adapter)')
-parser.add_argument('--use_snma_light', type=str_to_bool, default=False,
-                    help='Use SNMA-Light (residual predictor)')
-parser.add_argument('--snma_beta', type=float, default=0.1, help='Scale for SNMA-Light residual')
-parser.add_argument('--snma_memory_dim', type=int, default=128, help='SNMA-Light memory dimension')
 parser.add_argument('--use_chrc', type=str_to_bool, default=True, help='Use CHRC (retrieval corrector)')
 
 # data loader

@@ -7,7 +7,7 @@ This module provides:
 
 Key features:
 - Fixed capacity with intelligent eviction (LRU + importance + temporal decay)
-- Efficient retrieval using cosine similarity
+- Efficient retrieval using cosine/bilinear similarity
 - Aggregation of retrieved errors
 - Confidence-gated correction
 
@@ -136,7 +136,8 @@ class ErrorMemoryBank(nn.Module):
         min_entries_for_retrieval: int = 10,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
-        max_age: int = 0
+        max_age: int = 0,
+        similarity_mode: str = 'cosine'
     ):
         super().__init__()
 
@@ -150,6 +151,14 @@ class ErrorMemoryBank(nn.Module):
         self.forget_decay = forget_decay
         self.forget_threshold = forget_threshold
         self.max_age = max_age
+        self.similarity_mode = similarity_mode
+
+        if self.similarity_mode not in ('cosine', 'bilinear'):
+            raise ValueError("similarity_mode must be 'cosine' or 'bilinear'")
+        if self.similarity_mode == 'bilinear':
+            self.similarity_weight = nn.Parameter(torch.eye(feature_dim))
+        else:
+            self.register_parameter('similarity_weight', None)
 
         # Storage buffers (registered as buffers for state_dict persistence)
         self.register_buffer('keys', torch.zeros(capacity, feature_dim))
@@ -303,6 +312,18 @@ class ErrorMemoryBank(nn.Module):
         if self.forget_threshold > 0 or (self.max_age and self.max_age > 0):
             self._prune_stale_entries()
 
+    def _compute_similarity(self, query: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
+        """Compute similarity between query and keys."""
+        query_norm = F.normalize(query, p=2, dim=-1)
+        keys_norm = F.normalize(keys, p=2, dim=-1)
+
+        if self.similarity_mode == 'cosine':
+            return torch.mm(query_norm, keys_norm.t())
+        if self.similarity_mode == 'bilinear':
+            transformed = query_norm @ self.similarity_weight
+            return torch.mm(transformed, keys_norm.t())
+        raise ValueError(f"Unknown similarity_mode: {self.similarity_mode}")
+
     def retrieve(
         self,
         query: torch.Tensor,
@@ -340,11 +361,8 @@ class ErrorMemoryBank(nn.Module):
         valid_values = self.values[:n]  # [n, horizon, num_features]
         valid_timestamps = self.timestamps[:n]
 
-        # Compute cosine similarity
-        query_norm = F.normalize(query, p=2, dim=-1)  # [batch, feature_dim]
-        keys_norm = F.normalize(valid_keys, p=2, dim=-1)  # [n, feature_dim]
-
-        similarities = torch.mm(query_norm, keys_norm.t())  # [batch, n]
+        # Compute similarity
+        similarities = self._compute_similarity(query, valid_keys)  # [batch, n]
 
         # Apply temporal decay
         age = (self.global_step - valid_timestamps).float()
@@ -481,6 +499,51 @@ class ErrorMemoryBank(nn.Module):
         # Don't reset global_step to maintain temporal ordering
 
 
+class AttentionRetrieval(nn.Module):
+    """Attention-based retrieval for soft memory access."""
+
+    def __init__(self, feature_dim: int, num_heads: int = 4):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.attention = nn.MultiheadAttention(
+            embed_dim=feature_dim,
+            num_heads=num_heads,
+            batch_first=True,
+            kdim=feature_dim
+        )
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        keys: torch.Tensor,
+        values: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            query: [batch, feature_dim]
+            keys: [n, feature_dim]
+            values: [n, value_dim]
+
+        Returns:
+            attended: [batch, value_dim]
+            attn_weights: [batch, n]
+        """
+        batch_size = query.size(0)
+        query_seq = query.unsqueeze(1)  # [batch, 1, feature_dim]
+        keys_seq = keys.unsqueeze(0).expand(batch_size, -1, -1)
+
+        # Use keys as values for attention weights; apply weights to real values after.
+        _, attn_weights = self.attention(
+            query_seq,
+            keys_seq,
+            keys_seq,
+            need_weights=True
+        )
+        attn_weights = attn_weights.squeeze(1)  # [batch, n]
+        attended = attn_weights @ values  # [batch, value_dim]
+        return attended, attn_weights
+
+
 class CHRC(nn.Module):
     """
     Cross-Horizon Retrieval Corrector.
@@ -505,6 +568,8 @@ class CHRC(nn.Module):
         top_k: int = 5,
         temperature: float = 0.1,
         aggregation: str = 'softmax',
+        retrieval_mode: str = 'topk',
+        similarity_mode: str = 'cosine',
         use_refinement: bool = True,
         trust_threshold: float = 0.5,
         gate_steepness: float = 10.0,
@@ -515,7 +580,9 @@ class CHRC(nn.Module):
         min_similarity: float = 0.0,
         forget_decay: float = 1.0,
         forget_threshold: float = 0.0,
-        max_age: int = 0
+        max_age: int = 0,
+        attention_heads: int = 4,
+        attention_max_entries: int = 0
     ):
         super().__init__()
 
@@ -525,6 +592,7 @@ class CHRC(nn.Module):
         self.feature_dim = feature_dim
         self.top_k = top_k
         self.aggregation = aggregation
+        self.retrieval_mode = retrieval_mode
         self.use_refinement = use_refinement
         self.trust_threshold = trust_threshold
         self.gate_steepness = gate_steepness
@@ -533,6 +601,10 @@ class CHRC(nn.Module):
         self.horizon_mask_decay = horizon_mask_decay
         self.horizon_mask_min = horizon_mask_min
         self.min_similarity = min_similarity
+        self.attention_max_entries = attention_max_entries
+
+        if self.retrieval_mode not in ('topk', 'attention'):
+            raise ValueError("retrieval_mode must be 'topk' or 'attention'")
         # POGT Feature Encoder
         self.pogt_encoder = POGTFeatureEncoder(
             input_dim=num_features,
@@ -568,8 +640,18 @@ class CHRC(nn.Module):
             temperature=temperature,
             forget_decay=forget_decay,
             forget_threshold=forget_threshold,
-            max_age=max_age
+            max_age=max_age,
+            similarity_mode=similarity_mode
         )
+
+        # Attention-based retriever (optional)
+        if self.retrieval_mode == 'attention':
+            self.attention_retriever = AttentionRetrieval(
+                feature_dim=feature_dim,
+                num_heads=attention_heads
+            )
+        else:
+            self.attention_retriever = None
 
         # Confidence gate: use compact summary stats to avoid high-dimensional overfitting
         gate_input_dim = feature_dim + 4  # pogt_feat + [pred_mean, pred_std, corr_mean, corr_std]
@@ -645,6 +727,47 @@ class CHRC(nn.Module):
         query_key = F.normalize(pogt_features, p=2, dim=-1)
         return query_key, pogt_features
 
+    def _get_attention_memory(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Select memory entries for attention-based retrieval."""
+        n = self.memory_bank.current_size
+        keys = self.memory_bank.keys[:n]
+        values = self.memory_bank.values[:n]
+        timestamps = self.memory_bank.timestamps[:n]
+
+        if self.attention_max_entries and n > self.attention_max_entries:
+            _, idx = torch.topk(timestamps, k=self.attention_max_entries, largest=True)
+            keys = keys[idx]
+            values = values[idx]
+            timestamps = timestamps[idx]
+        return keys, values, timestamps
+
+    def _attention_retrieve(
+        self,
+        query_key: torch.Tensor
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Retrieve correction using attention over memory."""
+        batch_size = query_key.size(0)
+        device = query_key.device
+        n = self.memory_bank.current_size
+        if n < self.memory_bank.min_entries_for_retrieval:
+            zeros = torch.zeros(batch_size, self.horizon, self.num_features, device=device)
+            return zeros, None
+
+        keys, values, timestamps = self._get_attention_memory()
+        if keys.numel() == 0:
+            zeros = torch.zeros(batch_size, self.horizon, self.num_features, device=device)
+            return zeros, None
+
+        # Apply temporal decay to values
+        age = (self.memory_bank.global_step - timestamps).float()
+        decay = torch.pow(self.memory_bank.decay_factor, age).to(values.device)
+        values = values * decay.view(-1, 1, 1)
+
+        values_flat = values.reshape(values.size(0), -1)
+        attended, attn_weights = self.attention_retriever(query_key, keys, values_flat)
+        attended = attended.reshape(batch_size, self.horizon, self.num_features)
+        return attended, attn_weights
+
     def forward(
         self,
         prediction: torch.Tensor,
@@ -681,12 +804,16 @@ class CHRC(nn.Module):
         )
 
         # Aggregate retrieved errors
-        aggregated_error = self.memory_bank.aggregate(
-            retrieved_errors,
-            similarities,
-            valid_mask,
-            method=self.aggregation
-        )  # [batch, horizon, num_features]
+        attn_weights = None
+        if self.retrieval_mode == 'attention' and self.attention_retriever is not None:
+            aggregated_error, attn_weights = self._attention_retrieve(query_key)
+        else:
+            aggregated_error = self.memory_bank.aggregate(
+                retrieved_errors,
+                similarities,
+                valid_mask,
+                method=self.aggregation
+            )  # [batch, horizon, num_features]
 
         # Estimate retrieval quality
         quality_input = torch.cat([
@@ -747,7 +874,9 @@ class CHRC(nn.Module):
                 'retrieval_quality': retrieval_quality,
                 'max_similarity': max_similarity,
                 'similarity_gate': similarity_gate,
-                'effective_confidence': effective_confidence
+                'effective_confidence': effective_confidence,
+                'retrieval_mode': self.retrieval_mode,
+                'attention_weights': attn_weights
             }
             return corrected, details
 

@@ -2,7 +2,7 @@
 Experiment class for H-Mem training and evaluation.
 
 Extends Exp_Online with H-Mem specific:
-- Two-phase training (SNMA/SNMA-Light warmup + joint training)
+- Two-phase training (SNMA warmup + joint training)
 - Delayed memory bank updates
 - POGT extraction from streaming data
 - Flexible adaptation strategies
@@ -31,7 +31,7 @@ class Exp_HMem(Exp_Online):
     H-Mem experiment class.
 
     Extends Exp_Online with H-Mem specific features:
-    - Phased training (SNMA/SNMA-Light warmup → joint training)
+    - Phased training (SNMA warmup → joint training)
     - Delayed memory bank updates (respecting feedback delay)
     - POGT extraction utilities
     - Flexible component control (enable/disable SNMA or CHRC)
@@ -47,8 +47,6 @@ class Exp_HMem(Exp_Online):
         self.warmup_steps = getattr(args, 'hmem_warmup_steps', 100)
         self.joint_training = getattr(args, 'hmem_joint_training', True)
         self.use_snma = getattr(args, 'use_snma', False)
-        self.use_snma_light = getattr(args, 'use_snma_light', False)
-        self.use_snma_any = self.use_snma or self.use_snma_light
         self.use_chrc = getattr(args, 'use_chrc', True)
 
         self.pogt_source = getattr(args, 'hmem_pogt_source', 'batch_x')
@@ -125,16 +123,6 @@ class Exp_HMem(Exp_Online):
                     'params': snma_params,
                     'lr': self.args.online_learning_rate,
                     'name': 'snma'
-                })
-
-        # SNMA-Light parameters
-        if self.use_snma_light and hasattr(model, 'snma_light') and model.snma_light is not None:
-            snma_light_params = list(model.snma_light.parameters())
-            if snma_light_params:
-                param_groups.append({
-                    'params': snma_light_params,
-                    'lr': self.args.online_learning_rate,
-                    'name': 'snma_light'
                 })
 
         # CHRC parameters
@@ -268,8 +256,6 @@ class Exp_HMem(Exp_Online):
                 print("[Warning] NaN detected in prediction, skipping update")
                 if hasattr(model, 'snma'):
                     model.snma.reset(batch_size=batch_x.size(0))
-                if hasattr(model, 'snma_light') and model.snma_light is not None:
-                    model.snma_light.reset()
                 return 0.0
 
             # Main loss: prediction vs ground truth
@@ -282,8 +268,6 @@ class Exp_HMem(Exp_Online):
                 print("[Warning] NaN/Inf detected in loss, skipping update")
                 if hasattr(model, 'snma'):
                     model.snma.reset(batch_size=batch_x.size(0))
-                if hasattr(model, 'snma_light') and model.snma_light is not None:
-                    model.snma_light.reset()
                 return 0.0
 
             # Auxiliary loss: encourage adaptation to improve base prediction
@@ -314,10 +298,6 @@ class Exp_HMem(Exp_Online):
             model.snma.detach_state()
         elif hasattr(model, 'module') and hasattr(model.module, 'snma'):
             model.module.snma.detach_state()
-        if hasattr(model, 'snma_light') and model.snma_light is not None:
-            model.snma_light.detach_state()
-        elif hasattr(model, 'module') and hasattr(model.module, 'snma_light') and model.module.snma_light is not None:
-            model.module.snma_light.detach_state()
 
         # Store for delayed memory bank update
         if model.flag_store_errors:
@@ -523,24 +503,24 @@ class Exp_HMem(Exp_Online):
             # Phase switching: warmup → joint training
             if self._warmup_phase and i >= self.warmup_steps:
                 self._warmup_phase = False
-                if self.joint_training and self.use_chrc and self.use_snma_any:
+                if self.joint_training and self.use_chrc and self.use_snma:
                     model.freeze_chrc(False)
                     if self.args.local_rank <= 0:
                         pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Enabling joint SNMA + SNMA-Light + CHRC training.")
-                elif self.use_chrc and not self.use_snma_any:
+                                   f"Enabling joint SNMA + CHRC training.")
+                elif self.use_chrc and not self.use_snma:
                     model.freeze_chrc(False)
                     if self.args.local_rank <= 0:
                         pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Using CHRC only (SNMA variants disabled).")
-                elif self.use_snma_any and not self.use_chrc:
+                                   f"Using CHRC only (SNMA disabled).")
+                elif self.use_snma and not self.use_chrc:
                     if self.args.local_rank <= 0:
                         pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Using SNMA variants only (CHRC disabled).")
+                                   f"Using SNMA only (CHRC disabled).")
                 else:
                     if self.args.local_rank <= 0:
                         pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                   f"Both SNMA variants and CHRC disabled.")
+                                   f"Both SNMA and CHRC disabled.")
 
             # During warmup, only train SNMA
             if self._warmup_phase and self.use_chrc:

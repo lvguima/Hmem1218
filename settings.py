@@ -64,6 +64,10 @@ hyperparams = {
         # Error memory bank settings
         'memory_capacity': 1000,
         'retrieval_top_k': 5,
+        'chrc_similarity_mode': 'cosine',
+        'chrc_retrieval_mode': 'topk',
+        'chrc_attention_heads': 4,
+        'chrc_attention_max_entries': 0,
         'chrc_feature_dim': 128,
         'chrc_temperature': 0.1,
         'chrc_aggregation': 'softmax',
@@ -85,9 +89,6 @@ hyperparams = {
         'weight_decay': 0.01,
         'freeze': True,  # Freeze backbone
         'use_snma': False,
-        'use_snma_light': False,
-        'snma_beta': 0.1,
-        'snma_memory_dim': 128,
         'use_chrc': True,
     },
 }
