@@ -587,10 +587,21 @@ class Exp_HMem(Exp_Online):
         # Compute metrics
         from util.metrics import metric
         mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
+        true_mean = np.mean(trues)
+        true_var = np.mean((trues - true_mean) ** 2)
+        if true_var > 1e-10:
+            r2 = 1 - (mse / true_var)
+        else:
+            r2 = 0.0
 
         if self.args.local_rank <= 0:
             print(f"\n[H-Mem] {phase.upper()} Results:")
-            print(f"  MSE: {mse:.6f} | MAE: {mae:.6f} | RMSE: {rmse:.6f}")
+            print(
+                "  MSE: {:.6f} | MAE: {:.6f} | RMSE: {:.6f} | RSE: {:.6f} | "
+                "R2: {:.6f} | MAPE: {:.6f}".format(
+                    mse, mae, rmse, rse, r2, mape
+                )
+            )
             if self.use_chrc and hasattr(model, 'chrc') and model.chrc is not None:
                 stats = model.get_statistics()
                 memory_stats = stats.get('memory_bank')

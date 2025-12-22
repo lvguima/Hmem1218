@@ -243,34 +243,33 @@ Different methods have different optimal learning rates:
 
 ```bash
 # Frozen Baseline (no online update)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --only_test --pretrain
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --only_test --pretrain MSE:0.829312, MAE:0.583861, RMSE:0.910666, RSE:0.565868, R2:0.679794, MAPE:2.796977
 
 # Online (naive gradient descent)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method Online --only_test --pretrain --online_learning_rate 3e-5
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method Online --only_test --pretrain --online_learning_rate 3e-5 MSE:0.939867, MAE:0.614536, RMSE:0.969467, RSE:0.602406, R2:0.637107, MAPE:2.886523
 
 # ER (Experience Replay)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method ER --only_test --pretrain --online_learning_rate 3e-5
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method ER --only_test --pretrain --online_learning_rate 3e-5 MSE:0.825871, MAE:0.572302, RMSE:0.908774, RSE:0.564692, R2:0.681122, MAPE:2.674491
 
 # DERpp (Dark Experience Replay++)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method DERpp --only_test --pretrain --online_learning_rate 3e-5
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method DERpp --only_test --pretrain --online_learning_rate 3e-5 MSE:0.826054, MAE:0.571583, RMSE:0.908875, RSE:0.564755, R2:0.681052, MAPE:2.671617
 
 # ACL
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method ACL --only_test --pretrain --online_learning_rate 3e-5
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method ACL --only_test --pretrain --online_learning_rate 3e-5 MSE:0.845022, MAE:0.579447, RMSE:0.919251, RSE:0.571203, R2:0.673728, MAPE:2.701152
 
 # CLSER
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method CLSER --only_test --pretrain --online_learning_rate 3e-5
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method CLSER --only_test --pretrain --online_learning_rate 3e-5 MSE:0.841965, MAE:0.579638, RMSE:0.917586, RSE:0.570168, R2:0.674908, MAPE:2.704499
 
 # MIR
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method MIR --only_test --pretrain --online_learning_rate 3e-5
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method MIR --only_test --pretrain --online_learning_rate 3e-5 MSE:0.748713, MAE:0.547708, RMSE:0.865282, RSE:0.537667, R2:0.710914, MAPE:2.584059
 
 # SOLID (Sample-level Contextualized Adapter)
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method SOLID --only_test --pretrain --online_learning_rate 1e-4
+MSE:0.829229, MAE:0.583832, RMSE:0.910620, RSE:0.565839, R2:0.679826, MAPE:2.796808
 
-# Proceed (Proactive Model Adaptation, KDD 2025)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method Proceed --only_test --pretrain --online_learning_rate 3e-5 --freeze --concept_dim 200 --bottleneck_dim 32 --tune_mode down_up
 
 # HMem (Ours, P2+P7+P8 config)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma False --use_chrc True --retrieval_top_k 5 --chrc_aggregation softmax --chrc_trust_threshold 0.5 --chrc_gate_steepness 10.0 --chrc_use_horizon_mask True --chrc_horizon_mask_mode exp --chrc_horizon_mask_decay 0.98 --chrc_horizon_mask_min 0.2 --chrc_use_buckets True --chrc_bucket_num 4
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method HMem --only_test --pretrain --online_learning_rate 1e-5 --use_snma False --use_chrc True --retrieval_top_k 5 --chrc_aggregation softmax --chrc_trust_threshold 0.5 --chrc_gate_steepness 10.0 --chrc_use_horizon_mask True --chrc_horizon_mask_mode exp --chrc_horizon_mask_decay 0.98 --chrc_horizon_mask_min 0.2 --chrc_use_buckets True --chrc_bucket_num 4 MSE: 0.708377 | MAE: 0.538165 | RMSE: 0.841651
 ```
 
 ### 5.2 Weather Dataset

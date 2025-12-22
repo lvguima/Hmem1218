@@ -33,6 +33,10 @@ def resolve_checkpoint_path(args):
     base_dir = args.checkpoints if getattr(args, 'checkpoints', None) else './checkpoints/'
     # 按数据集/模型名组织checkpoint目录
     checkpoint_dir = os.path.join(base_dir, args.dataset, args.model)
+    pred_dir = os.path.join(checkpoint_dir, str(args.pred_len))
+    pred_checkpoint = os.path.join(pred_dir, 'checkpoint.pth')
+    if os.path.exists(pred_checkpoint):
+        return pred_checkpoint
     os.makedirs(checkpoint_dir, exist_ok=True)
     return os.path.join(checkpoint_dir, 'checkpoint.pth')
 
@@ -41,6 +45,10 @@ def resolve_checkpoint_path(args):
     base_dir = args.checkpoints if getattr(args, 'checkpoints', None) else './checkpoints/'
     # 按数据集/模型名组织checkpoint目录
     checkpoint_dir = os.path.join(base_dir, args.dataset, args.model)
+    pred_dir = os.path.join(checkpoint_dir, str(args.pred_len))
+    pred_checkpoint = os.path.join(pred_dir, 'checkpoint.pth')
+    if os.path.exists(pred_checkpoint):
+        return pred_checkpoint
     os.makedirs(checkpoint_dir, exist_ok=True)
     return os.path.join(checkpoint_dir, 'checkpoint.pth')
 
