@@ -16,6 +16,7 @@ from torch import optim
 import warnings
 import copy
 from util.metrics import update_metrics, calculate_metrics
+from util.online_curve import compute_step_mse, save_online_curve_csv
 from util.tools import test_params_flop
 
 warnings.filterwarnings('ignore')
@@ -142,6 +143,7 @@ class Exp_SOLID(Exp_Online):
                                  drop_last=False, pin_memory=False)
         criterion = nn.MSELoss()
         statistics = {k: 0 for k in ['total', 'y_sum', 'MSE', 'MAE']}
+        step_mse = []
         if not self.args.continual:
             if not self.args.whole_model:
                 pretrained_state_dict = copy.deepcopy(self.final_head.state_dict())
@@ -198,6 +200,7 @@ class Exp_SOLID(Exp_Online):
                 if not self.args.pin_gpu:
                     true = true.to(self.device)
                 update_metrics(outputs, true, statistics, target_variate)
+                step_mse.extend(compute_step_mse(outputs, true, target_variate))
             if not self.args.continual:
                 if not self.args.whole_model:
                     self.final_head.load_state_dict(pretrained_state_dict)
@@ -210,6 +213,9 @@ class Exp_SOLID(Exp_Online):
         r2 = metrics.get('R2', 0.0)
         mape = metrics.get('MAPE', 0.0)
         print('MSE:{:.6f}, MAE:{:.6f}, RMSE:{:.6f}, RSE:{:.6f}, R2:{:.6f}, MAPE:{:.6f}'.format(mse, mae, rmse, rse, r2, mape))
+        if phase == 'test' and getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
+            window = getattr(self.args, 'rolling_window', 500)
+            save_online_curve_csv(self.args, step_mse, method_name='SOLID', window=window)
         if self.args.do_predict:
             return mse, mae, online_data, predictions
         else:

@@ -24,6 +24,7 @@ from exp.exp_online import Exp_Online
 from adapter.hmem import HMem, build_hmem
 from data_provider.data_factory import get_dataset, get_dataloader
 from data_provider.data_loader import Dataset_Recent
+from util.online_curve import save_online_curve_csv
 
 
 class Exp_HMem(Exp_Online):
@@ -593,6 +594,7 @@ class Exp_HMem(Exp_Online):
             r2 = 1 - (mse / true_var)
         else:
             r2 = 0.0
+        step_mse = np.mean((preds - trues) ** 2, axis=(1, 2)).tolist()
 
         if self.args.local_rank <= 0:
             print(f"\n[H-Mem] {phase.upper()} Results:")
@@ -614,6 +616,9 @@ class Exp_HMem(Exp_Online):
                     total_capacity = memory_stats.get('capacity', 0)
                     utilization = memory_stats.get('utilization', 0.0)
                 print(f"  Memory Bank: {total_entries} entries, {utilization*100:.1f}% full")
+            if phase == 'test' and getattr(self.args, 'border_type', None) == 'online':
+                window = getattr(self.args, 'rolling_window', 500)
+                save_online_curve_csv(self.args, step_mse, method_name='HMem', window=window)
 
         # Return format consistent with Exp_Online.online()
         return mse, mae, online_data

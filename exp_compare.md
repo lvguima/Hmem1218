@@ -246,7 +246,7 @@ Different methods have different optimal learning rates:
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --only_test --pretrain MSE:0.829312, MAE:0.583861, RMSE:0.910666, RSE:0.565868, R2:0.679794, MAPE:2.796977
 
 # Online (naive gradient descent)
-python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method Online --only_test --pretrain --online_learning_rate 3e-5 MSE:0.939867, MAE:0.614536, RMSE:0.969467, RSE:0.602406, R2:0.637107, MAPE:2.886523
+python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 288 --pred_len 24 --itr 1 --online_method Online --only_test --pretrain --online_learning_rate 3e-5 MSE:0.939867, MAE:0.614536, RMSE:0.969467, RSE:0.602406, R2:0.637107, MAPE:2.886523
 
 # ER (Experience Replay)
 python -u run.py --dataset ETTm1 --border_type online --model iTransformer --seq_len 512 --pred_len 96 --itr 1 --online_method ER --only_test --pretrain --online_learning_rate 3e-5 MSE:0.825871, MAE:0.572302, RMSE:0.908774, RSE:0.564692, R2:0.681122, MAPE:2.674491

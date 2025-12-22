@@ -9,6 +9,7 @@ from exp.exp_main import Exp_Main
 from models.OneNet import OneNet, Model_Ensemble
 from util.buffer import Buffer
 from util.metrics import metric, update_metrics, calculate_metrics
+from util.online_curve import compute_step_mse, save_online_curve_csv
 import torch
 import torch.nn.functional as F
 from torch import optim, nn
@@ -147,6 +148,7 @@ class Exp_Online(Exp_Main):
         if self.args.do_predict:
             predictions = []
         statistics = {k: 0 for k in ['total', 'y_sum', 'MSE', 'MAE']}
+        step_mse = []
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
@@ -178,7 +180,11 @@ class Exp_Online(Exp_Main):
                     if isinstance(outputs, (tuple, list)):
                         outputs = outputs[0]
                     predictions.append(outputs.detach().cpu().numpy())
-                update_metrics(outputs, current_data[self.label_position].to(self.device), statistics, target_variate)
+                true = current_data[self.label_position]
+                if not self.args.pin_gpu:
+                    true = true.to(self.device)
+                update_metrics(outputs, true, statistics, target_variate)
+                step_mse.extend(compute_step_mse(outputs, true, target_variate))
 
                 if phase == 'test' and hasattr(self.args, 'debug') and self.args.debug:
                     if isinstance(outputs, (tuple, list)):
@@ -198,6 +204,9 @@ class Exp_Online(Exp_Main):
         mape = metrics.get('MAPE', 0.0)
         if phase == 'test':
             print('MSE:{:.6f}, MAE:{:.6f}, RMSE:{:.6f}, RSE:{:.6f}, R2:{:.6f}, MAPE:{:.6f}'.format(mse, mae, rmse, rse, r2, mape))
+            if getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
+                window = getattr(self.args, 'rolling_window', 500)
+                save_online_curve_csv(self.args, step_mse, window=window)
         if self.args.do_predict:
             return mse, mae, online_data, predictions
         else:

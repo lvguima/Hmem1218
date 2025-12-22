@@ -8,6 +8,7 @@ from data_provider.data_factory import get_dataset
 from exp.exp_basic import Exp_Basic
 from util.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop, load_model_compile
 from util.metrics import metric, update_metrics, calculate_metrics
+from util.online_curve import compute_step_mse, save_online_curve_csv
 
 import torch
 import torch.nn as nn
@@ -99,8 +100,11 @@ class Exp_Main(Exp_Basic):
             base_dir = self.args.checkpoints if getattr(self.args, 'checkpoints', None) else './checkpoints/'
             dataset = getattr(self.args, 'dataset', 'default')
             model = getattr(self.args, 'model', 'default')
-            # 按数据集/模型名组织checkpoint目录
-            checkpoint_dir = os.path.join(base_dir, dataset, model)
+            pred_len = getattr(self.args, 'pred_len', None)
+            if pred_len is not None:
+                checkpoint_dir = os.path.join(base_dir, dataset, model, str(pred_len))
+            else:
+                checkpoint_dir = os.path.join(base_dir, dataset, model)
             checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pth')
         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
         return checkpoint_path
@@ -242,6 +246,7 @@ class Exp_Main(Exp_Basic):
 
         self.model.eval()
         statistics = {k: 0 for k in ['total', 'y_sum', 'MSE', 'MAE']}
+        step_mse = []
         with torch.no_grad():
             for i, batch in enumerate(test_loader):
                 outputs = self.forward(batch)
@@ -249,6 +254,7 @@ class Exp_Main(Exp_Basic):
                 if not self.args.pin_gpu:
                     true = true.to(self.device)
                 update_metrics(outputs, true, statistics, target_variate)
+                step_mse.extend(compute_step_mse(outputs, true, target_variate))
 
         metrics = calculate_metrics(statistics)
         mse, mae = metrics['MSE'], metrics['MAE']
@@ -257,6 +263,9 @@ class Exp_Main(Exp_Basic):
         r2 = metrics.get('R2', 0.0)
         mape = metrics.get('MAPE', 0.0)
         print('MSE:{:.6f}, MAE:{:.6f}, RMSE:{:.6f}, RSE:{:.6f}, R2:{:.6f}, MAPE:{:.6f}'.format(mse, mae, rmse, rse, r2, mape))
+        if getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
+            window = getattr(self.args, 'rolling_window', 500)
+            save_online_curve_csv(self.args, step_mse, method_name='Frozen', window=window)
         return mse, mae, test_data, test_loader
 
     def predict(self, path, setting, load=False):
