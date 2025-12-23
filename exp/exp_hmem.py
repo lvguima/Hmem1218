@@ -2,7 +2,7 @@
 Experiment class for H-Mem training and evaluation.
 
 Extends Exp_Online with H-Mem specific:
-- Two-phase training (SNMA warmup + joint training)
+- Optional warmup (freeze CHRC gates)
 - Delayed memory bank updates
 - POGT extraction from streaming data
 - Flexible adaptation strategies
@@ -33,10 +33,10 @@ class Exp_HMem(Exp_Online):
     H-Mem experiment class.
 
     Extends Exp_Online with H-Mem specific features:
-    - Phased training (SNMA warmup → joint training)
+    - Optional warmup phase
     - Delayed memory bank updates (respecting feedback delay)
     - POGT extraction utilities
-    - Flexible component control (enable/disable SNMA or CHRC)
+    - Flexible component control (enable/disable CHRC)
     """
 
     def __init__(self, args):
@@ -46,9 +46,7 @@ class Exp_HMem(Exp_Online):
 
         # H-Mem specific settings (MUST be set before super().__init__)
         self.pogt_ratio = getattr(args, 'pogt_ratio', 0.5)
-        self.warmup_steps = getattr(args, 'hmem_warmup_steps', 100)
-        self.joint_training = getattr(args, 'hmem_joint_training', True)
-        self.use_snma = getattr(args, 'use_snma', False)
+        self.warmup_steps = int(getattr(args, 'hmem_warmup_steps', 0))
         self.use_chrc = getattr(args, 'use_chrc', True)
 
         self.pogt_source = getattr(args, 'hmem_pogt_source', 'batch_x')
@@ -61,7 +59,7 @@ class Exp_HMem(Exp_Online):
         self.delay_steps = args.pred_len  # Wait for full horizon
 
         # Training phase tracking
-        self._warmup_phase = True
+        self._warmup_phase = self.warmup_steps > 0
         self._current_step = 0
 
         super().__init__(args)
@@ -85,10 +83,9 @@ class Exp_HMem(Exp_Online):
         """
         Create optimizer with different learning rates for components.
 
-        H-Mem has three trainable components:
-        1. SNMA (neural memory)
-        2. CHRC (retrieval corrector)
-        3. Backbone (usually frozen)
+        H-Mem has two trainable components:
+        1. CHRC (retrieval corrector; gating/refiner networks)
+        2. Backbone (usually frozen)
 
         Args:
             filter_frozen: Whether to filter frozen parameters (ignored for H-Mem)
@@ -116,16 +113,6 @@ class Exp_HMem(Exp_Online):
 
         # Collect parameters
         param_groups = []
-
-        # SNMA parameters
-        if self.use_snma:
-            snma_params = list(model.snma.parameters())
-            if snma_params:
-                param_groups.append({
-                    'params': snma_params,
-                    'lr': self.args.online_learning_rate,
-                    'name': 'snma'
-                })
 
         # CHRC parameters
         if self.use_chrc and model.chrc is not None:
@@ -256,8 +243,6 @@ class Exp_HMem(Exp_Online):
             # Guard: NaN in prediction
             if torch.isnan(prediction).any():
                 print("[Warning] NaN detected in prediction, skipping update")
-                if hasattr(model, 'snma'):
-                    model.snma.reset(batch_size=batch_x.size(0))
                 return 0.0
 
             # Main loss: prediction vs ground truth
@@ -268,18 +253,7 @@ class Exp_HMem(Exp_Online):
             # Guard: NaN/Inf in loss
             if torch.isnan(loss) or torch.isinf(loss):
                 print("[Warning] NaN/Inf detected in loss, skipping update")
-                if hasattr(model, 'snma'):
-                    model.snma.reset(batch_size=batch_x.size(0))
                 return 0.0
-
-            # Auxiliary loss: encourage adaptation to improve base prediction
-            if self.use_snma and 'adapted_prediction' in outputs:
-                base_loss = criterion(outputs['base_prediction'], gt)
-                adapted_loss = criterion(outputs['adapted_prediction'], gt)
-
-                adaptation_gain = base_loss - adapted_loss
-                if adaptation_gain < 0:
-                    loss = loss + 0.1 * torch.relu(-adaptation_gain)
 
         # Backward pass - only if loss requires grad
         if loss.requires_grad:
@@ -294,12 +268,6 @@ class Exp_HMem(Exp_Online):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
-
-        # IMPORTANT: Detach SNMA memory to free computation graph without wiping state
-        if hasattr(model, 'snma'):
-            model.snma.detach_state()
-        elif hasattr(model, 'module') and hasattr(model.module, 'snma'):
-            model.module.snma.detach_state()
 
         # Store for delayed memory bank update
         if model.flag_store_errors:
@@ -403,7 +371,8 @@ class Exp_HMem(Exp_Online):
             desc='H-Mem Validation Warmup',
             mininterval=10,
             leave=False,
-            dynamic_ncols=True
+            dynamic_ncols=True,
+            disable=True
         )
         warmup_losses = []
 
@@ -491,7 +460,7 @@ class Exp_HMem(Exp_Online):
         pbar = tqdm(
             online_loader,
             desc=f'H-Mem Online ({phase})',
-            disable=not show_progress,
+            disable=True,
             mininterval=10,
             leave=False,          # Clear progress bar after loop
             dynamic_ncols=True,   # Adjust columns dynamically
@@ -512,29 +481,13 @@ class Exp_HMem(Exp_Online):
                 self._current_step = i
                 pogt_for_pred = None
 
-                # Phase switching: warmup -> joint training
+                # Warmup: optionally freeze CHRC parameters in early stage
                 if self._warmup_phase and i >= self.warmup_steps:
                     self._warmup_phase = False
-                    if self.joint_training and self.use_chrc and self.use_snma:
+                    if self.use_chrc:
                         model.freeze_chrc(False)
                         if self.args.local_rank <= 0:
-                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                       f"Enabling joint SNMA + CHRC training.")
-                    elif self.use_chrc and not self.use_snma:
-                        model.freeze_chrc(False)
-                        if self.args.local_rank <= 0:
-                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                       f"Using CHRC only (SNMA disabled).")
-                    elif self.use_snma and not self.use_chrc:
-                        if self.args.local_rank <= 0:
-                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                       f"Using SNMA only (CHRC disabled).")
-                    else:
-                        if self.args.local_rank <= 0:
-                            pbar.write(f"[H-Mem] Warmup complete at step {i}. "
-                                       f"Both SNMA and CHRC disabled.")
-
-                # During warmup, only train SNMA
+                            pbar.write(f"[H-Mem] Warmup complete at step {i}. Enabling CHRC training.")
                 if self._warmup_phase and self.use_chrc:
                     model.freeze_chrc(True)
 

@@ -44,7 +44,7 @@ class Exp_Proceed(Exp_Online):
         self.model.train()
         predictions = []
         if not self.args.joint_update_valid:
-            for i, (recent_batch, current_batch) in enumerate(tqdm(valid_loader, mininterval=10)):
+            for i, (recent_batch, current_batch) in enumerate(tqdm(valid_loader, mininterval=10, disable=True)):
                 self._model.freeze_bias(False)
                 self._model.freeze_adapter(True)
                 self._update_online(recent_batch, criterion, model_optim, scaler, flag_current=False)
@@ -61,7 +61,7 @@ class Exp_Proceed(Exp_Online):
                     predictions.append(outputs.detach().cpu().numpy())
             self._model.freeze_bias(False)
         else:
-            for i, (recent_batch, current_batch) in enumerate(tqdm(valid_loader, mininterval=10)):
+            for i, (recent_batch, current_batch) in enumerate(tqdm(valid_loader, mininterval=10, disable=True)):
                 self._update_online(recent_batch, criterion, model_optim, scaler, flag_current=True)
                 if self.args.do_predict:
                     self.model.eval()

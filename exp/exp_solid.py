@@ -149,7 +149,7 @@ class Exp_SOLID(Exp_Online):
                 pretrained_state_dict = copy.deepcopy(self.final_head.state_dict())
             else:
                 pretrained_state_dict = copy.deepcopy(self.state_dict())
-        for i, batch in enumerate(tqdm(test_loader, mininterval=10)):
+        for i, batch in enumerate(tqdm(test_loader, mininterval=10, disable=True)):
             if i < self.test_train_num + self.pred_len - 1:
                 continue
             batch_x, batch_y, batch_x_mark, batch_y_mark = batch
@@ -249,7 +249,7 @@ class Exp_SOLID(Exp_Online):
         print('GPU Mem:', torch.cuda.max_memory_allocated())
 
         j = 0
-        for i, batch in enumerate(tqdm(test_loader, mininterval=10)):
+        for i, batch in enumerate(tqdm(test_loader, mininterval=10, disable=True)):
 
             if i < self.test_train_num + self.pred_len - 1:
                 continue

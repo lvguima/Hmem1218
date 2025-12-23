@@ -445,73 +445,7 @@ class TestIntegration:
         assert chrc.memory_bank.current_size > 0
 
     def test_chrc_with_snma(self):
-        """Test CHRC integration with SNMA."""
-        from adapter.module.neural_memory import SNMA
-        from adapter.module.lora import inject_lora_layers, set_all_lora_params, clear_all_lora_params
-
-        # Create a simple model
-        model = nn.Sequential(
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Linear(128, 24 * 7)  # Output: horizon * features
-        )
-
-        # Inject LoRA
-        model, info = inject_lora_layers(model, rank=4, freeze_weight=True)
-
-        # Create SNMA
-        layer_dims = {}
-        for name, layer_info in info.items():
-            shapes = layer_info['shapes']
-            layer_dims[name] = {
-                'A': shapes['A'],
-                'B': shapes['B'],
-                'total': layer_info['param_count'],
-                'type': layer_info['type']
-            }
-
-        snma = SNMA(input_features=7, memory_dim=64, bottleneck_dim=16)
-        snma.register_lora_layers(layer_dims)
-
-        # Create CHRC
-        chrc = CHRC(
-            num_features=7,
-            horizon=24,
-            pogt_len=12,
-            feature_dim=64,
-            capacity=100,
-            top_k=5
-        )
-
-        # Simulate workflow
-        for step in range(10):
-            # Input
-            x = torch.randn(2, 64)
-            pogt = torch.randn(2, 12, 7)
-
-            # SNMA generates LoRA params
-            lora_params, _ = snma(pogt)
-            set_all_lora_params(model, lora_params)
-
-            # Model prediction
-            with torch.no_grad():
-                pred_flat = model(x)
-                prediction = pred_flat.reshape(2, 24, 7)
-
-            # CHRC correction
-            corrected = chrc(prediction, pogt)
-
-            # Store error (simulated delayed feedback)
-            if step > 0:
-                fake_error = torch.randn(2, 24, 7) * 0.1
-                chrc.store_error(pogt, fake_error)
-
-            # Clean up
-            clear_all_lora_params(model)
-            snma.reset(batch_size=2)
-
-        # Verify both modules work together
-        assert chrc.memory_bank.current_size > 0
+        pytest.skip("SNMA has been removed from the runtime pipeline; CHRC is evaluated standalone.")
 
 
 # =============================================================================

@@ -85,20 +85,6 @@ parser.add_argument('--wo_clip', action='store_true', default=False)
 parser.add_argument('--learning_rate_w', type=float, default=0.001, help='optimizer learning rate')
 parser.add_argument('--learning_rate_bias', type=float, default=0.001, help='optimizer learning rate')
 
-# H-Mem (LoRA)
-parser.add_argument('--lora_rank', type=int, default=8, help='LoRA rank')
-parser.add_argument('--lora_alpha', type=float, default=16.0, help='LoRA alpha (scaling factor)')
-parser.add_argument('--lora_dropout', type=float, default=0.0, help='LoRA dropout')
-parser.add_argument('--lora_ema_decay', type=float, default=0.0,
-                    help='EMA decay for LoRA params (0 disables smoothing)')
-
-# H-Mem (Neural Memory)
-parser.add_argument('--memory_dim', type=int, default=256, help='Neural memory dimension')
-parser.add_argument('--memory_momentum', type=float, default=0.9, help='Momentum for surprise running stats')
-parser.add_argument('--memory_num_heads', type=int, default=4, help='Number of heads for memory read attention')
-parser.add_argument('--hmem_share_pogt', type=str_to_bool, default=False,
-                    help='Share POGT representation between SNMA and CHRC')
-
 # H-Mem (CHRC)
 parser.add_argument('--memory_capacity', type=int, default=1000, help='Error memory bank capacity')
 parser.add_argument('--retrieval_top_k', type=int, default=5, help='Top-K retrieval for error correction')
@@ -137,9 +123,8 @@ parser.add_argument('--chrc_log_stride', type=int, default=10,
 parser.add_argument('--pogt_ratio', type=float, default=0.5, help='POGT ratio')
 parser.add_argument('--hmem_pogt_source', type=str, default='batch_x',
                     help='POGT source for H-Mem: batch_x (causal) or batch_y (leaky)')
-parser.add_argument('--hmem_warmup_steps', type=int, default=100, help='SNMA warmup steps')
-parser.add_argument('--hmem_joint_training', type=str_to_bool, default=True, help='Enable joint SNMA+CHRC training')
-parser.add_argument('--use_snma', type=str_to_bool, default=False, help='Use SNMA (neural memory adapter)')
+parser.add_argument('--hmem_warmup_steps', type=int, default=0,
+                    help='Warmup steps (freeze CHRC parameters)')
 parser.add_argument('--use_chrc', type=str_to_bool, default=True, help='Use CHRC (retrieval corrector)')
 
 # ACL

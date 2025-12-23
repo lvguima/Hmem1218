@@ -52,15 +52,6 @@ hyperparams = {
     'Autoformer': {'train_epochs': 10, 'timeenc': 1},
     'Informer': {'train_epochs': 10, 'timeenc': 1},
     'HMem': {
-        # LoRA settings
-        'lora_rank': 8,
-        'lora_alpha': 16.0,
-        'lora_dropout': 0.0,
-        # Neural memory settings
-        'memory_dim': 256,
-        'bottleneck_dim': 32,
-        'memory_momentum': 0.9,
-        'memory_num_heads': 4,
         # Error memory bank settings
         'memory_capacity': 1000,
         'retrieval_top_k': 5,
@@ -79,12 +70,10 @@ hyperparams = {
         # POGT settings
         'pogt_ratio': 0.5,  # Use 50% of horizon as POGT
         'hmem_pogt_source': 'batch_x',
-        # Training settings
-        'hmem_warmup_steps': 100,
-        'hmem_joint_training': True,
+        # Training settings (optional)
+        'hmem_warmup_steps': 0,
         'weight_decay': 0.01,
         'freeze': True,  # Freeze backbone
-        'use_snma': False,
         'use_chrc': True,
     },
 }

@@ -89,7 +89,7 @@ class Exp_Online(Exp_Main):
         scaler = torch.cuda.amp.GradScaler() if self.args.use_amp else None
         self.model.train()
         predictions = []
-        for i, (recent_batch, current_batch) in enumerate(tqdm(valid_loader, mininterval=10)):
+        for i, (recent_batch, current_batch) in enumerate(tqdm(valid_loader, mininterval=10, disable=True)):
             self._update_online(recent_batch, criterion, model_optim, scaler)
             if self.args.do_predict:
                 self.model.eval()
@@ -168,7 +168,7 @@ class Exp_Online(Exp_Main):
             self.writer = tensorboard.SummaryWriter(log_dir=log_dir)
 
         if phase == 'test' or show_progress:
-            online_loader = tqdm(online_loader, mininterval=10)
+            online_loader = tqdm(online_loader, mininterval=10, disable=True)
         for i, (recent_data, current_data) in enumerate(online_loader):
             self.model.train()
             loss, _ = self._update_online(recent_data, criterion, model_optim, scaler)
@@ -227,7 +227,7 @@ class Exp_Online(Exp_Main):
         scaler = torch.cuda.amp.GradScaler() if self.args.use_amp else None
 
         if phase == 'test' or show_progress:
-            online_loader = tqdm(online_loader, mininterval=10)
+            online_loader = tqdm(online_loader, mininterval=10, disable=True)
         self.model.train()
         for i, current_data in enumerate(online_loader):
             loss, outputs = self._update_online(current_data, criterion, model_optim, scaler)
@@ -269,7 +269,7 @@ class Exp_Online(Exp_Main):
         scaler = torch.cuda.amp.GradScaler() if self.args.use_amp else None
 
         if phase == 'test' or show_progress:
-            online_loader = tqdm(online_loader, mininterval=10)
+            online_loader = tqdm(online_loader, mininterval=10, disable=True)
         for i, (recent_data, current_data) in enumerate(online_loader):
             self.model.train()
             with torch.no_grad():

@@ -12,6 +12,7 @@ Run with: pytest tests/test_neural_memory.py -v
 """
 
 import pytest
+pytest.skip("SNMA has been removed from the runtime pipeline; legacy unit tests are disabled.", allow_module_level=True)
 import torch
 import torch.nn as nn
 

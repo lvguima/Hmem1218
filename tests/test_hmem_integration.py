@@ -13,6 +13,7 @@ Run with: pytest tests/test_hmem_integration.py -v
 """
 
 import pytest
+pytest.skip("Legacy H-Mem (SNMA/LoRA) integration tests are disabled; runtime is CHRC-only.", allow_module_level=True)
 import torch
 import torch.nn as nn
 import numpy as np
