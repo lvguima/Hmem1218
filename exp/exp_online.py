@@ -9,7 +9,9 @@ from exp.exp_main import Exp_Main
 from models.OneNet import OneNet, Model_Ensemble
 from util.buffer import Buffer
 from util.metrics import metric, update_metrics, calculate_metrics
-from util.online_curve import compute_step_mse, save_online_curve_csv
+from util.online_curve import compute_step_mse, save_online_curve_csv, resolve_method_name
+from util.runtime_profile import init_runtime_log, log_runtime_step, finalize_runtime_log
+from util.test_summary import save_test_summary
 import torch
 import torch.nn.functional as F
 from torch import optim, nn
@@ -167,9 +169,25 @@ class Exp_Online(Exp_Main):
                 shutil.rmtree(log_dir)
             self.writer = tensorboard.SummaryWriter(log_dir=log_dir)
 
+        runtime_handle = None
+        runtime_writer = None
+        runtime_dir = None
+        ms_values = []
+        sps_values = []
+        memory_mb = None
+        if phase == 'test' and self.args.use_gpu:
+            torch.cuda.reset_peak_memory_stats()
+        if phase == 'test' and getattr(self.args, 'local_rank', -1) <= 0:
+            method_name = resolve_method_name(self.args, default="online")
+            runtime_handle, runtime_writer, runtime_dir = init_runtime_log(self.args, method_name)
+
         if phase == 'test' or show_progress:
             online_loader = tqdm(online_loader, mininterval=10, disable=True)
         for i, (recent_data, current_data) in enumerate(online_loader):
+            if runtime_writer is not None:
+                if self.args.use_gpu:
+                    torch.cuda.synchronize()
+                start_time = time.perf_counter()
             self.model.train()
             loss, _ = self._update_online(recent_data, criterion, model_optim, scaler)
             # assert not torch.isnan(loss)
@@ -185,6 +203,16 @@ class Exp_Online(Exp_Main):
                     true = true.to(self.device)
                 update_metrics(outputs, true, statistics, target_variate)
                 step_mse.extend(compute_step_mse(outputs, true, target_variate))
+            if runtime_writer is not None:
+                if self.args.use_gpu:
+                    torch.cuda.synchronize()
+                elapsed = time.perf_counter() - start_time
+                batch_size = int(true.shape[0]) if hasattr(true, 'shape') else 1
+                ms = elapsed * 1000.0
+                sps = batch_size / elapsed if elapsed > 0 else float("nan")
+                log_runtime_step(runtime_writer, i, ms, sps)
+                ms_values.append(ms)
+                sps_values.append(sps)
 
                 if phase == 'test' and hasattr(self.args, 'debug') and self.args.debug:
                     if isinstance(outputs, (tuple, list)):
@@ -207,6 +235,30 @@ class Exp_Online(Exp_Main):
             if getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
                 window = getattr(self.args, 'rolling_window', 500)
                 save_online_curve_csv(self.args, step_mse, window=window)
+                if self.args.use_gpu:
+                    torch.cuda.synchronize()
+                    memory_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+                model = self._model
+                params_total = sum(p.numel() for p in model.parameters())
+                params_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                method_name = resolve_method_name(self.args, default="online")
+                save_test_summary(
+                    self.args,
+                    method_name,
+                    {
+                        "mse": mse,
+                        "mae": mae,
+                        "rmse": rmse,
+                        "rse": rse,
+                        "r2": r2,
+                        "mape": mape,
+                    },
+                    params_total=params_total,
+                    params_trainable=params_trainable,
+                    memory_mb=memory_mb,
+                )
+            if runtime_writer is not None:
+                finalize_runtime_log(runtime_handle, runtime_dir, ms_values, sps_values)
         if self.args.do_predict:
             return mse, mae, online_data, predictions
         else:

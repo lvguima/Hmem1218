@@ -1,0 +1,4 @@
+segment,method,mse_mean
+Early,hmem,0.0570881592258242
+Middle,hmem,0.051477056431075814
+Late,hmem,3.7991338103784718

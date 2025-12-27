@@ -13,6 +13,7 @@ Date: 2025-12-13
 
 import copy
 import os
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,8 +25,10 @@ from exp.exp_online import Exp_Online
 from adapter.hmem import HMem, build_hmem
 from data_provider.data_factory import get_dataset, get_dataloader
 from data_provider.data_loader import Dataset_Recent
-from util.online_curve import save_online_curve_csv
+from util.online_curve import save_online_curve_csv, resolve_method_name
 from util.chrc_logging import open_chrc_logs, close_chrc_logs, log_chrc_step
+from util.runtime_profile import init_runtime_log, log_runtime_step, finalize_runtime_log
+from util.test_summary import save_test_summary
 
 
 class Exp_HMem(Exp_Online):
@@ -474,10 +477,25 @@ class Exp_HMem(Exp_Online):
             and log_stride > 0
         )
         chrc_logs = open_chrc_logs(self.args, method_name='hmem') if log_chrc else None
+        runtime_handle = None
+        runtime_writer = None
+        runtime_dir = None
+        ms_values = []
+        sps_values = []
+        memory_mb = None
+        if phase == 'test' and self.args.use_gpu:
+            torch.cuda.reset_peak_memory_stats()
+        if phase == 'test' and self.args.local_rank <= 0:
+            method_name = resolve_method_name(self.args, override="hmem")
+            runtime_handle, runtime_writer, runtime_dir = init_runtime_log(self.args, method_name)
 
         try:
             # Training loop
             for i, (recent_batch, current_batch) in enumerate(pbar):
+                if runtime_writer is not None:
+                    if self.args.use_gpu:
+                        torch.cuda.synchronize()
+                    start_time = time.perf_counter()
                 self._current_step = i
                 pogt_for_pred = None
 
@@ -526,6 +544,9 @@ class Exp_HMem(Exp_Online):
                         base_pred = outputs.get('base_prediction')
                         details = outputs.get('chrc_details', None)
                         true = batch_y[:, -self.args.pred_len:, :]
+                        bucket_id = None
+                        if hasattr(model, '_compute_bucket_id'):
+                            bucket_id = model._compute_bucket_id(batch_x_mark)
                         similarities = details.get('similarities') if details else None
                         valid_mask = details.get('valid_mask') if details else None
                         log_chrc_step(
@@ -535,7 +556,8 @@ class Exp_HMem(Exp_Online):
                             pred=pred,
                             true=true,
                             similarities=similarities,
-                            valid_mask=valid_mask
+                            valid_mask=valid_mask,
+                            bucket_id=bucket_id
                         )
                     else:
                         pred = model(batch_x, batch_x_mark, pogt=pogt, return_components=False)
@@ -545,6 +567,17 @@ class Exp_HMem(Exp_Online):
                 # Collect predictions and ground truths
                 preds.append(pred.detach().cpu().numpy())
                 trues.append(batch_y[:, -self.args.pred_len:, :].detach().cpu().numpy())
+
+                if runtime_writer is not None:
+                    if self.args.use_gpu:
+                        torch.cuda.synchronize()
+                    elapsed = time.perf_counter() - start_time
+                    batch_size = int(batch_y.shape[0]) if hasattr(batch_y, 'shape') else 1
+                    ms = elapsed * 1000.0
+                    sps = batch_size / elapsed if elapsed > 0 else float("nan")
+                    log_runtime_step(runtime_writer, i, ms, sps)
+                    ms_values.append(ms)
+                    sps_values.append(sps)
 
                 # Update progress bar postfix every print_interval steps
                 if (i + 1) % print_interval == 0 and self.args.local_rank <= 0:
@@ -603,7 +636,32 @@ class Exp_HMem(Exp_Online):
                 print(f"  Memory Bank: {total_entries} entries, {utilization*100:.1f}% full")
             if phase == 'test' and getattr(self.args, 'border_type', None) == 'online':
                 window = getattr(self.args, 'rolling_window', 500)
-                save_online_curve_csv(self.args, step_mse, method_name='HMem', window=window)
+                method_name = resolve_method_name(self.args, override="hmem")
+                save_online_curve_csv(self.args, step_mse, method_name=method_name, window=window)
+                if self.args.use_gpu:
+                    torch.cuda.synchronize()
+                    memory_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+                params_total = sum(p.numel() for p in model.parameters())
+                params_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                save_test_summary(
+                    self.args,
+                    method_name,
+                    {
+                        "mse": mse,
+                        "mae": mae,
+                        "rmse": rmse,
+                        "rse": rse,
+                        "r2": r2,
+                        "mape": mape,
+                        "mspe": mspe,
+                        "corr": corr,
+                    },
+                    params_total=params_total,
+                    params_trainable=params_trainable,
+                    memory_mb=memory_mb,
+                )
+            if runtime_writer is not None:
+                finalize_runtime_log(runtime_handle, runtime_dir, ms_values, sps_values)
 
         # Return format consistent with Exp_Online.online()
         return mse, mae, online_data

@@ -1,0 +1,4 @@
+segment,method,mse_mean
+Early,acl,0.723900460099374
+Middle,acl,0.9660706620607099
+Late,acl,0.8291867611930791

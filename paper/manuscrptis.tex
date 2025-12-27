@@ -1,0 +1,482 @@
+\documentclass[lettersize,journal]{IEEEtran}
+\usepackage{amsmath,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{array}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{booktabs}  % 用于三线表 (\toprule, \midrule, \bottomrule)
+\usepackage{tabularx}  % 用于自适应列宽
+\usepackage{ragged2e}  % 用于单元格内换行对齐 (\RaggedRight)
+\usepackage{cite}
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+% updated with editorial comments 8/9/2021
+
+\begin{document}
+
+\title{Learning to Remember and Adapt: Online Soft Sensors with Cross-Horizon Retrieval Correction in Non-Stationary Industrial Processes}
+
+\author{IEEE Publication Technology,~\IEEEmembership{Staff,~IEEE,}
+        % <-this % stops a space
+}
+
+% The paper headers
+\markboth{Journal of \LaTeX\ Class Files,~Vol.~14, No.~8, August~2021}%
+{Shell \MakeLowercase{\textit{et al.}}: A Sample Article Using IEEEtran.cls for IEEE Journals}
+
+
+% Remember, if you use this you must call \IEEEpubidadjcol in the second
+% column for its text to clear the IEEEpubid mark.
+
+\maketitle
+
+\begin{abstract}
+Industrial soft sensors frequently suffer from performance degradation ("aging") due to continuous concept drifts in non-stationary environments. While Continual Learning (CL) has shown promise in process monitoring, existing approaches predominantly focus on classification tasks, overlooking the hypersensitivity to error and the continuous manifold evolution inherent in time-series regression. Naively applying classification-oriented strategies to regression often leads to accumulated biases under gradual drifts or overfitting to transient noise. To address these challenges, this paper proposes a novel Fast-Slow Memory Network (FSM). The FSM framework introduces a decoupled fast-slow learning architecture to structurally separate stable global trends from evolving local residuals. Specifically, the "Slow System" employs a frozen decomposition backbone to capture long-term trends, providing a robust numerical baseline for extrapolation stability. The "Fast System" constructs a neural dictionary to dynamically memorize evolving residual patterns. Crucially, to tackle the noise sensitivity of regression, we introduce an Inertial Test-Time Training (Inertial TTT) mechanism. By leveraging the physical inertia of the optimization trajectory as a temporal filter, this mechanism smooths instantaneous noisy gradients, enabling the model to keenly track drifts in a self-supervised manner. Furthermore, an input-dependent dynamic gating is designed to adaptively fuse the robust historical baseline with real-time adaptive corrections. Extensive experiments on public benchmarks (ETT, Weather) and two real-world industrial processes (Grinding and Flotation) demonstrate that FSM significantly outperforms state-of-the-art CL methods in prediction accuracy, adaptation speed, and robustness against catastrophic forgetting.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Soft Sensing, Concept Drift, Continual Learning, Industrial process
+\end{IEEEkeywords}
+
+\section{Introduction}
+\IEEEPARstart{I}{n} the global background of Industry 4.0 and intelligent manufacturing, process industries—encompassing core sectors such as chemical engineering, petroleum refining, non-ferrous metallurgy, and wastewater treatment—are undergoing a profound paradigm shift from automation to intelligence. The driving force behind this transformation lies in the effective utilization of massive industrial process data, integrating domain knowledge, data science, and artificial intelligence to achieve precise perception, real-time optimization, and intelligent decision-making. In this context, soft sensing technology has emerged as a cornerstone of process monitoring. By utilizing easy-to-measure auxiliary variables to infer Key Quality Indicators in real-time, soft sensing effectively resolves the challenge of significant time delays associated with traditional offline analysis, thereby greatly enhancing the responsiveness and stability of control systems.
+
+However, despite significant achievements in theoretical research and preliminary applications, the large-scale, long-term deployment of soft sensors in industrial scenarios remains hindered by a severe and pervasive challenge: non-stationarity. Industrial environments are not idealized static systems but complex, time-varying environments characterized by dynamic evolution. Over time, the interplay of various physical and chemical factors—such as catalyst deactivation, equipment fouling, fluctuations in raw material properties, and external environmental changes—induces concept drift in the statistical characteristics of process data. This drift causes static global models trained on historical data to gradually deviate from actual operating conditions, leading to the phenomenon known as "soft sensor aging," which severely impedes the sustainable development of industrial intelligence. Crucially, the non-stationarity induced by concept drift manifests in complex, multi-dimensional forms rather than as a singular statistical phenomenon. In real-world industrial sites, these drifts exhibit diverse time scales and statistical features, ranging from transient abrupt shifts to long-term gradual evolutions, imposing distinct and stringent adaptability requirements on monitoring models. Table \ref{table1} systematically summarizes five typical types of concept drift in industrial processes along with their corresponding physical mechanisms.
+
+To address the diverse drifts illustrated in Table \ref{table1}, research focus in both academia and industry has shifted from static modeling to dynamic techniques capable of online adaptation. Ideally, a soft sensor must navigate the classic "Stability-Plasticity Dilemma": it requires sufficient plasticity to rapidly adapt to new regimes while maintaining high stability to prevent catastrophic forgetting of historical knowledge. Early adaptive approaches were primarily based on recursive identification theory, typified by Recursive Least Squares (RLS) and its kernel variants (KRLS). These methods employ forgetting factors to dynamically adjust memory length, attempting to balance tracking agility with noise suppression. However, simple recursive updates often struggle to capture the strong nonlinear dynamics of complex industrial processes and are susceptible to interference from high-dimensional collinear data.
+
+To tackle both nonlinearity and non-stationarity, the Just-In-Time Learning (JITL) paradigm emerged. JITL operates on the "local linearity" assumption: while the global process is nonlinear and time-varying, it can be approximated as linear within a small local neighborhood. Consequently, JITL abandons the maintenance of a single global model in favor of constructing local models on-the-fly for each query sample. The efficacy of JITL hinges on the definition of similarity. The traditional Euclidean distance often fails to account for the multivariate coupling of industrial data. To address this, recent works have introduced spatio-temporal graph decoupling [12] to incorporate causal relationships and topological consistency. Similarly, Dynamic Time Warping (DTW) [13] has been adopted to handle nonlinear temporal distortions, enabling the capture of transitional dynamics. Despite its success in handling nonlinearity, the "online retrieval and modeling" mechanism of JITL imposes prohibitive computational latency and storage burdens in high-frequency sampling environments, and its performance is severely constrained in scenarios with scarce labeled data.
+
+\begin{table*}[htbp]
+    \centering
+    \caption{Taxonomy of Concept Drift in Industrial Processes}
+    \label{table1}
+    \renewcommand{\arraystretch}{1.3} % 增加行高，提升可读性
+    \begin{tabularx}{\textwidth}{@{}l X X@{}}
+        \toprule
+        \textbf{Drift Type} & \textbf{Statistical Evolution Characteristics} & \textbf{Typical Industrial Physics Examples} \\
+        \midrule
+        \textbf{Sudden Drift} & 
+        The data distribution undergoes a step-like change in an instant, with statistical properties exhibiting a cliff-like jump. & 
+        Critical sensor failure, sudden catalyst poisoning, change of raw material suppliers, switching of production lines or reactors. \\
+        
+        \textbf{Gradual Drift} & 
+        Process states shift slowly and unidirectionally over time; highly difficult to distinguish from measurement noise in the short term. & 
+        Decay of heat transfer efficiency due to exchanger fouling, mechanical wear of components, natural aging of catalyst activity. \\
+        
+        \textbf{Incremental Drift} & 
+        Process variables show a continuous and smooth trend over time, representing an intermediate state between sudden and gradual drifts. & 
+        Drift in cooling water efficiency caused by seasonal temperature/humidity changes, gradual pressure drop increase due to filter clogging. \\
+        
+        \textbf{Reoccurring Drift} & 
+        Process states cycle or switch irregularly among multiple known historical distribution modes. & 
+        Diurnal temperature cycles, multi-grade production changeovers, periodic Clean-in-Place (CIP) cycles. \\
+        
+        \textbf{Open-world Drift} & 
+        Emergence of entirely new distribution patterns never covered in the training space, representing exploration of unknown regions. & 
+        Introduction of novel raw material types or recipes, occurrence of unrecorded equipment failure modes or extreme operating conditions. \\
+        \bottomrule
+    \end{tabularx}
+\end{table*}
+
+With the rapid advancement of the Industrial Internet of Things (IIoT), the emergence of massive high-dimensional data has propelled the application of deep learning in soft sensing. To adapt to dynamic environments, incremental learning has been introduced into deep neural networks, aiming to accommodate new data streams by fine-tuning network parameters. However, this naive adaptation faces a severe "Stability-Plasticity Dilemma": the rapid acquisition of new knowledge often leads to the catastrophic forgetting of previously learned experiences.
+To mitigate this issue, a growing body of research on Continual Learning (CL) has emerged, predominantly in the field of process monitoring. One representative category of approaches employs parameter isolation or structural expansion strategies. For instance, Huang et al. proposed an Incremental Rank Continual Dictionary Learning (IRCDL) framework. By abandoning a single shared model update strategy, they introduced a low-rank matrix augmentation mechanism that trains and freezes independent parameters for each new mode, thereby achieving "zero-forgetting" monitoring of multimode processes. Another mainstream category relies on regularization-based strategies. Zhang et al. integrated Elastic Weight Consolidation (EWC) into Probabilistic Slow Feature Analysis (PSFA) and Recursive Principal Component Analysis (RPCA). By evaluating parameter importance via the Fisher information matrix and applying quadratic penalties, these methods effectively constrain the drift of critical parameters while updating the model to capture time-varying dynamics—such as slow features or long-term cointegration relationships. Consequently, they achieve a dynamic balance between preserving historical memory and adapting to new operating conditions. 
+
+While the aforementioned continual learning-based studies on process monitoring and fault diagnosis (e.g., Benatia et al., Huang et al., Chen et al.) have made significant strides in handling the drifts listed in Table 1, it must be noted that these works primarily address Classification or Anomaly Detection tasks. Wu et al. [15] made a preliminary attempt by introducing a dual-buffer replay mechanism. Although targeting regression, their approach essentially relies on partitioning the data stream into distinct "tasks" based on error thresholds for isolated training and replay. However, this strategy is fundamentally predicated on the explicit discretization of continuous processes, assuming the existence of clear-cut boundaries between tasks. Such hard-boundary task partitioning struggles to seamlessly track and adapt to the continuous, smooth manifold evolution inherent in complex industrial processes, where distinct task boundaries rarely exist. A significant gap remains in online learning research for Soft Sensing—specifically, Regression tasks for non-stationary time series. Compared to classification, regression tasks face more severe and fundamentally different challenges when confronting the drifts described in Table 1, as detailed below:
+\begin{itemize}
+    \item \textbf{Sensitivity to Gradual and Incremental Drift:} In process monitoring (classification) tasks, models benefit from a large margin of error. For gradual or incremental drifts (Table 1), such as heat exchanger fouling, as long as the distribution shift does not cross the inter-class Decision Boundary, the prediction typically remains robust. However, in soft sensing (regression), the continuity of the output space eliminates this tolerance buffer. Any minute gradual shift in input distribution (Covariate Shift) or mapping relationship (Concept Shift) translates directly and linearly into prediction Bias. Existing regularization strategies, which focus on maintaining class separability, lack mechanisms for the high-precision real-time correction of continuous numerical deviations.
+    \item \textbf{Continuous Evolution vs. Discrete Modes in Reoccurring Drift:} For periodic or reoccurring drifts, existing continual learning methods typically employ "model pool" or "parameter subspace" strategies, discretizing the process into fixed modes. While effective for fault classification, industrial soft sensing targets often reside on a continuously changing Dynamic Manifold. For instance, during multi-grade product transitions, the process undergoes continuous Transition States rather than hopping between discrete modes. Directly applying "discrete mode memory" mechanisms leads to model failure during these transition intervals. Therefore, regression tasks demand an architecture capable of adapting to Continuous Dynamics rather than mere discrete mode switching.
+    \item \textbf{Robustness to Open-world Drift:} Facing open-world drifts (e.g., new raw materials), existing monitoring methods need only identify the state as "unknown" (open-set recognition). However, soft sensing systems cannot stop at rejection; they must provide minimally risky predictions. Naive adaptation methods (like Test-Time Training) often fail catastrophically here by over-fitting to the novel distribution with insufficient samples. A robust system requires a "fail-safe" mechanism—relying on the physics-informed backbone when retrieval confidence is low—rather than blindly adapting to every anomaly.
+    \item \textbf{Contextual Ambiguity (State Aliasing) in Retrieval:} Most retrieval-based adaptive methods (e.g., JITL) rely solely on input similarity to locate historical reference samples. However, in non-stationary industrial systems, the mapping from inputs to outputs is one-to-many depending on the latent regime (e.g., catalyst activity level). Two time steps may exhibit identical sensor readings but yield divergent quality outcomes due to underlying parameter shifts. Relying exclusively on input similarity causes \textbf{State Aliasing}, leading to the retrieval of contextually mismatched error patterns (Negative Transfer). Effective adaptation requires resolving this ambiguity by incorporating the model's predictive intent as a latent context descriptor.
+\end{itemize}
+
+In summary, directly applying continual learning strategies designed for classification fails to meet the stringent requirements of soft sensing for numerical precision, continuous tracking, and unknown robustness. Consequently, there is an urgent need to develop an online learning mechanism tailored specifically for the characteristics of time-series regression.
+
+To address these challenges, we propose \textbf{H-Mem}, a novel \textbf{Horizon-Bridging Contextual Memory} framework. Unlike gradient-based methods that struggle with the stability-plasticity trade-off, H-Mem adopts a non-parametric "Retrieve-and-Correct" paradigm. Our core innovation is the \textbf{Dual-Key Contextual Retrieval} mechanism. We postulate that the model's own \textit{predictive intent} explicitly encodes the current regime. By fusing the environmental state (Input) with the model's intent (Base Prediction) into a composite query, H-Mem disambiguates aliased states, ensuring that historical experiences are retrieved only when both the \textit{situation} and the \textit{response} align. Furthermore, to respect strict causality, we implement a \textbf{Delayed Feedback Evolution} loop that updates the memory only when ground truth becomes available
+
+The main contributions of this paper are summarized as follows:
+\begin{itemize}
+    \item \textbf{H-Mem Framework:} We propose a decoupled architecture combining a Frozen Backbone for stability and a \textbf{Dual-Key Retrieval Corrector (DK-RC)} for plasticity. This structure resolves the conflict between retaining universal physical laws and tracking local drifts.
+    \item \textbf{Resolving State Aliasing:} We identify the "State Aliasing" problem in industrial retrieval adaptation and propose a \textbf{Dual-Key} mechanism (Input + Prediction) to eliminate contextual ambiguity, significantly reducing negative transfer in multi-regime processes.
+    \item \textbf{Regime-Aware Robustness:} We introduce \textbf{Regime-Aware Bucketing} and \textbf{Adaptive Confidence Gating} to handle continuous dynamics and filter noise. This ensures the model adapts aggressively in familiar regimes while robustly falling back to the backbone in open-world scenarios.
+    \item \textbf{Industrial Validation:} Extensive experiments on standard benchmarks and real-world \textbf{Grinding} and \textbf{Flotation} processes demonstrate that H-Mem achieves superior accuracy and efficiency compared to SOTA continual learning methods, offering a strictly causal, gradient-free solution for online soft sensing.
+\end{itemize}
+
+\section{Methodology}
+
+\subsection{Problem Formulation}
+\label{sec:problem_formulation}
+
+We consider the problem of \textit{Online Time Series Forecasting} (OTSF) in non-stationary environments. Let $\mathcal{S} = \{(\mathbf{X}_t, \mathbf{Y}_t)\}_{t=1}^{T}$ denote a continuous data stream, where at each time step $t$, the model receives a look-back window $\mathbf{X}_t \in \mathbb{R}^{L \times C}$ (length $L$, $C$ variables) and must predict the future horizon $\mathbf{Y}_t \in \mathbb{R}^{H \times C}$.
+
+Unlike offline training where the joint distribution $P(\mathbf{X}, \mathbf{Y})$ is assumed static, real-world streams impose two critical constraints:
+\begin{enumerate}
+    \item \textbf{Concept Drift:} The data distribution varies over time, i.e., $P_t(\mathbf{X}, \mathbf{Y}) \neq P_{t+\Delta}(\mathbf{X}, \mathbf{Y})$. A static model trained on initial data will suffer from performance degradation as the environment evolves.
+    \item \textbf{Delayed Feedback:} Due to the forecasting horizon $H$, the ground truth $\mathbf{Y}_t$ is not immediately available for supervision at time $t$. Instead, it is revealed after a delay of $H$ steps. Consequently, at inference time $t$, the most recent available supervision is the pair $(\mathbf{X}_{t-H}, \mathbf{Y}_{t-H})$.
+\end{enumerate}
+
+Our objective is to maintain an accurate predictive function $f_t: \mathbf{X}_t \to \hat{\mathbf{Y}}_t$ that adapts to drifts online, minimizing the cumulative loss over time: $\mathcal{L}_{total} = \sum_{t=1}^T \|\hat{\mathbf{Y}}_t - \mathbf{Y}_t\|_2^2$, strictly respecting the causality constraint that updates at time $t$ can only utilize information available up to $t-H$.
+
+\subsection{Overview of H-Mem Framework}
+\label{sec:overview}
+
+To address the challenges of concept drift and delayed feedback, we propose the \textbf{H-Mem} framework. As illustrated in Fig.\~\ref{fig:framework}, H-Mem adopts a \textit{Decoupled Retrieval Architecture} that functionally separates the modeling of universal physical laws from the adaptation to evolving environmental biases.
+
+The framework consists of three key operational streams:
+\begin{enumerate}
+    \item \textbf{Stability Stream (Frozen Backbone):} We employ a pre-trained deep forecasting model (e.g., iTransformer, PatchTST) as the stability anchor. Its parameters $\theta$ remain \textbf{strictly frozen} during the online phase. This backbone extracts time-invariant features to generate a robust ``base forecast'' $\hat{\mathbf{Y}}_{base}$, preventing catastrophic forgetting often seen in gradient-based adaptation.
+    
+    \item \textbf{Plasticity Stream (CHRC):} To capture sudden drifts, we introduce the \textit{Cross-Horizon Retrieval Corrector} (CHRC). Acting as a \textbf{Neural Case-Based Reasoning} module, CHRC maintains an external memory of historical residuals. During inference, it retrieves and aggregates past error patterns—specifically those from similar contexts—to instantaneously rectify the base forecast. This is a non-parametric adaptation process requiring no backpropagation.
+
+    \item \textbf{Evolution Stream (Delayed Feedback):} To respect the causality constraint, we implement a \textit{Delayed Feedback Loop}. A FIFO buffer holds prediction contexts until their corresponding ground truth arrives at $t+H$. Only then are the realized errors computed and stored in the memory, ensuring the system's knowledge base evolves continuously with the data stream.
+\end{enumerate}
+
+\subsection{The State Aliasing Challenge}
+\label{sec:state_aliasing}
+
+A core premise of retrieval-based adaptation is that \textit{similar environmental states yield similar model errors}. However, defining the ``state'' solely by the input observation $\mathbf{X}_t$ (or the Partially Observed Ground Truth, POGT) is fundamentally insufficient in non-stationary environments. We term this limitation \textbf{State Aliasing}.
+
+In complex dynamical systems, the mapping from observed history to future targets is one-to-many depending on latent regimes (e.g., market sentiment, seasonal context, or hidden exogenous variables). Consequently, two time steps $t_i$ and $t_j$ may share nearly identical input patterns ($\mathbf{X}_{t_i} \approx \mathbf{X}_{t_j}$) yet exhibit divergent ground truth trajectories due to differing underlying dynamics. If a corrector relies exclusively on input similarity, it risks retrieving historical errors from an incompatible regime—a phenomenon known as \textit{Negative Transfer}.
+
+To resolve this ambiguity, H-Mem posits that the \textit{forecasting model's own output} serves as a powerful latent descriptor. The base prediction $\hat{\mathbf{Y}}_{base}$, while potentially biased, explicitly encodes the model's perception of the trend and periodicity. \subsection{Cross-Horizon Retrieval Corrector (CHRC)}
+\label{sec:chrc}
+
+The CHRC acts as the plasticity engine of H-Mem. It is designed to be a non-parametric, inference-time adaptation module that stores specific error patterns and retrieves them to correct future predictions.
+
+\subsubsection{Regime-Aware Memory Construction}
+To prevent the retrieval of historically irrelevant errors (e.g., using a weekend error pattern to correct a weekday forecast), we structurally enforce temporal consistency via \textit{Regime-Aware Bucketing}. The global memory space $\mathcal{M}$ is partitioned into disjoint buckets $\mathcal{B}_1, \dots, \mathcal{B}_N$ based on explicit time features associated with each step $t$.
+
+Let $\mathbf{\tau}_t \in \mathbb{R}^K$ be the time covariates (e.g., hour of day, day of week). We assign the current step to a specific bucket using a hashing function:
+\begin{equation}
+    k_{bucket} = \mathcal{H}(\mathbf{\tau}_t) \pmod N
+\end{equation}
+Each bucket $\mathcal{B}_k$ operates as an independent First-In-First-Out (FIFO) queue storing Key-Value pairs $\{(\mathbf{K}_i, \mathbf{V}_i)\}$, where $\mathbf{V}_i \in \mathbb{R}^{H \times C}$ represents the historical error vector. During inference, retrieval is strictly confined to the active bucket $\mathcal{B}_{k_{bucket}}$, ensuring that the model only references experiences from compatible temporal regimes.
+
+\subsubsection{Dual-Key Contextual Retrieval}
+\label{sec:dual_key}
+
+To implement the resolution of State Aliasing (Sec.~\ref{sec:state_aliasing}), we propose a \textit{Dual-Key Retrieval} mechanism. Instead of a single query vector, we construct a composite query $\mathbf{Q}_t$ by fusing two distinct information sources:
+
+\begin{enumerate}
+    \item \textbf{Observation Key ($\mathbf{k}_{obs}$):} Encodes the recent environmental state. We use the input look-back window (or POGT) $\mathbf{X}_t$:
+    \begin{equation}
+        \mathbf{k}_{obs} = \phi_{obs}(\text{Flatten}(\mathbf{X}_t))
+    \end{equation}
+    where $\phi_{obs}$ is a lightweight MLP encoder projecting the raw input into a latent feature space $\mathbb{R}^d$.
+
+    \item \textbf{Intent Key ($\mathbf{k}_{pred}$):} Encodes the backbone's current predictive intent. We process the base forecast $\hat{\mathbf{Y}}_{base}$:
+    \begin{equation}
+        \mathbf{k}_{pred} = \phi_{pred}(\text{Flatten}(\hat{\mathbf{Y}}_{base}))
+    \end{equation}
+    where $\phi_{pred}$ is a separate encoder mapping the prediction trajectory to $\mathbb{R}^d$.
+\end{enumerate}
+
+The final query $\mathbf{Q}_t$ is obtained by fusing these representations via a linear projection layer $\mathbf{W}_{fuse}$:
+\begin{equation}
+    \mathbf{Q}_t = \mathbf{W}_{fuse} \cdot [\mathbf{k}_{obs} \mathbin{\|} \mathbf{k}_{pred}]
+\end{equation}
+where $\mathbin{\|}$ denotes concatenation. The memory keys $\mathbf{K}_i$ stored in the bank are constructed identically using the historical data available at time $t-i$. This composite key ensures that a historical error is retrieved only when both the \textit{situation} (input) and the \textit{response} (prediction) align with the current state.
+
+\subsubsection{Adaptive Correction and Gating}
+Once the query $\mathbf{Q}_t$ is formed, we retrieve the top-$k$ nearest neighbors from the active bucket $\mathcal{B}_{k_{bucket}}$ based on cosine similarity:
+\begin{equation}
+    s_i = \frac{\mathbf{Q}_t \cdot \mathbf{K}_i}{\|\mathbf{Q}_t\| \|\mathbf{K}_i\|}, \quad (\mathbf{K}_i, \mathbf{V}_i) \in \mathcal{N}_k
+\end{equation}
+
+\paragraph{Confidence Gating}
+A naive retrieval system risks applying harmful corrections when no relevant history exists (i.e., when all $s_i$ are low). To mitigate this, we introduce an \textit{Adaptive Confidence Gate} $\alpha_t \in (0, 1)$. Let $s_{max} = \max_i(s_i)$ be the similarity of the best match. The gate is computed via a shifted sigmoid function:
+\begin{equation}
+    \alpha_t = \sigma\left( \gamma \cdot (s_{max} - \tau) \right)
+\end{equation}
+where $\tau$ is a learnable trust threshold and $\gamma$ controls the transition steepness. This mechanism effectively suppresses the correction module ($\alpha_t \to 0$) when the retrieval confidence is below the trust threshold, acting as an automatic fallback to the stable backbone.
+
+\paragraph{Horizon-Aware Aggregation}
+The retrieved residual patterns are aggregated using a Softmax kernel over the similarities to produce the raw correction vector:
+\begin{equation}
+    \Delta_{raw} = \sum_{i=1}^k \frac{\exp(s_i / T)}{\sum_{j=1}^k \exp(s_j / T)} \cdot \mathbf{V}_i
+\end{equation}
+where $T$ is a temperature parameter. Furthermore, acknowledging that error patterns at distant horizons are intrinsically more stochastic and less "retrievable" than near-term errors, we apply a \textit{Horizon Mask} $\mathbf{M} \in \mathbb{R}^H$. The mask enforces an exponential decay on the correction strength over the prediction horizon $h \in \{1, \dots, H\}$:
+\begin{equation}
+    \mathbf{M}[h] = \beta^{h-1}
+\end{equation}
+where $\beta \in (0, 1)$ is a decay factor. The final rectified prediction is obtained by:
+\begin{equation}
+    \hat{\mathbf{Y}}_{final} = \hat{\mathbf{Y}}_{base} + \alpha_t \cdot (\mathbf{M} \odot \Delta_{raw})
+\end{equation}
+This ensures that H-Mem aggressively corrects near-term forecasts where retrieval is reliable, while remaining conservative for long-term predictions.
+
+\subsection{Delayed Feedback Evolution}
+\label{sec:evolution}
+
+To maintain strict adherence to causality while enabling continuous learning, H-Mem implements a decoupled \textit{Delayed Feedback Loop}. This mechanism manages the lifecycle of experience samples, handling the temporal gap between prediction generation and error realization.
+
+At inference time $t$, the system generates the context tuple $\mathcal{C}_t = (\mathbf{Q}_t, \hat{\mathbf{Y}}_{base})$ and the final forecast $\hat{\mathbf{Y}}_{final}$. However, the ground truth $\mathbf{Y}_t$ is unknown. Thus, instead of updating the memory immediately, we push $\mathcal{C}_t$ into a pending buffer $\mathcal{W}$ of size $H$.
+
+The memory update is triggered only at time $t+H$, when the ground truth $\mathbf{Y}_t$ becomes fully observable. The process proceeds as follows:
+\begin{enumerate}
+    \item \textbf{Context Retrieval:} The system pops the historical context $\mathcal{C}_t$ from the buffer $\mathcal{W}$.
+    \item \textbf{Error Realization:} The true prediction error of the backbone is computed: $\mathbf{V}_{new} = \mathbf{Y}_t - \hat{\mathbf{Y}}_{base}$. Note that we store the backbone's error, not the final corrected error, as the goal is to capture the bias of the stability anchor.
+    \item \textbf{Memory Write:} The new key-value pair $(\mathbf{Q}_t, \mathbf{V}_{new})$ is inserted into the appropriate regime bucket $\mathcal{B}_{k_{bucket}}$.
+\end{enumerate}
+
+To adapt to continuous concept drift, each bucket $\mathcal{B}_k$ maintains a fixed capacity $M$. When a bucket is full, the oldest entries are evicted (FIFO). This ensures that the corrector's knowledge base remains current, effectively ``forgetting'' obsolete error patterns that no longer reflect the environment's dynamics.
+
+\begin{algorithm}[tb]
+\caption{H-Mem Online Protocol: Dual-Key Retrieval \& Correction}
+\label{alg:hmem_protocol}
+\textbf{Input:} Frozen Backbone $f_\theta$, Horizon $H$, Memory Capacity $M$, Neighbors $K$, Temp $T$, Trust $\tau$, Steepness $\gamma$, Decay $\beta$ \\
+\textbf{Initialize:} Memory Buckets $\mathcal{M} = \{\mathcal{B}_1, \dots, \mathcal{B}_N\}$, Pending Buffer $\mathcal{W} \leftarrow \emptyset$
+\begin{algorithmic}[1]
+\FOR{each time step $t = 1, 2, \dots$}
+    \STATE \textbf{// Step 1: Stability Stream}
+    \STATE Receive input $\mathbf{X}_t$ and time features $\tau_t$
+    \STATE Base forecast: $\hat{\mathbf{Y}}_{\text{base}} \leftarrow f_\theta(\mathbf{X}_t)$
+
+    \STATE \textbf{// Step 2: Plasticity Stream (CHRC)}
+    \STATE Select bucket: $k \leftarrow \mathcal{H}(\tau_t) \pmod N$
+    \STATE Build Keys: $\mathbf{k}_{obs} \leftarrow \phi_{obs}(\mathbf{X}_t), \ \mathbf{k}_{pred} \leftarrow \phi_{pred}(\hat{\mathbf{Y}}_{\text{base}})$
+    \STATE Fuse Query: $\mathbf{Q}_t \leftarrow \mathbf{W}_{fuse} \cdot [\mathbf{k}_{obs} \| \mathbf{k}_{pred}]$
+    
+    \IF{$|\mathcal{B}_k| \ge K$}
+        \STATE Retrieve top-$K$: $\{(\mathbf{K}_i, \mathbf{V}_i)\}_{i=1}^K \leftarrow \text{KNN}(\mathbf{Q}_t, \mathcal{B}_k)$
+        \STATE Sim & Gate: $s_{max} \leftarrow \max(s_i); \ \alpha_t \leftarrow \sigma(\gamma(s_{max} - \tau))$
+        \STATE Weights: $w_i \leftarrow \text{Softmax}(s_i / T)$
+        \STATE Mask: $\mathbf{M}[h] \leftarrow \beta^{h-1}$ for $h \in 1..H$
+        \STATE Correction: $\Delta_t \leftarrow \alpha_t \cdot (\mathbf{M} \odot \sum w_i \mathbf{V}_i)$
+        \STATE Final Pred: $\hat{\mathbf{Y}}_t \leftarrow \hat{\mathbf{Y}}_{\text{base}} + \Delta_t$
+    \ELSE
+        \STATE $\hat{\mathbf{Y}}_t \leftarrow \hat{\mathbf{Y}}_{\text{base}}$ \COMMENT{Cold start or empty bucket}
+    \ENDIF
+    
+    \STATE Push context $(t, \mathbf{Q}_t, \hat{\mathbf{Y}}_{\text{base}}, k)$ to Buffer $\mathcal{W}$
+    \STATE \textbf{Output} $\hat{\mathbf{Y}}_t$
+    
+    \STATE \textbf{// Step 3: Delayed Evolution (at $t+H$)}
+    \IF{$t > H$}
+        \STATE Receive ground-truth $\mathbf{Y}_{t-H}$
+        \STATE Pop $(\mathbf{Q}_{old}, \hat{\mathbf{Y}}_{old}, k_{old}) \leftarrow \mathcal{W}.\text{pop}(t-H)$
+        \STATE Realized Error: $\mathbf{V}_{\text{new}} \leftarrow \mathbf{Y}_{t-H} - \hat{\mathbf{Y}}_{old}$
+        \STATE Update Memory: $\mathcal{B}_{k_{old}}.\text{push}(\mathbf{Q}_{old}, \mathbf{V}_{\text{new}})$
+        \IF{$|\mathcal{B}_{k_{old}}| > M$}
+            \STATE $\mathcal{B}_{k_{old}}.\text{pop\_oldest()}$
+        \ENDIF
+    \ENDIF
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Computational Complexity Analysis}
+\label{sec:complexity}
+
+Efficiency is paramount for online soft sensors deployed on edge devices. We analyze the complexity of H-Mem relative to gradient-based adaptation methods (e.g., Test-Time Training). Let $L$ be the look-back window, $H$ the horizon, $D$ the hidden dimension, and $M$ the memory capacity.
+
+\paragraph{Time Complexity}
+The total inference latency consists of the backbone forward pass and the CHRC correction.
+\begin{itemize}
+    \item \textbf{Backbone:} $O(L^2 \cdot D)$ for Transformers or $O(L \cdot D)$ for linear models. Since the backbone is frozen, we avoid the costly backward pass ($ \approx 2\times$ forward cost) and optimizer step required by gradient methods.
+    \item \textbf{CHRC:} The overhead involves encoding keys ($O(L \cdot D)$), fusing queries ($O(D^2)$), and retrieving neighbors ($O(M \cdot D)$). Since $M$ is a fixed constant (typically $10^3 \sim 10^4$), the retrieval complexity is $O(1)$ with respect to the stream length $T$. Moreover, approximate nearest neighbor search (e.g., HNSW) can reduce retrieval to $O(\log M)$.
+\end{itemize}
+Thus, H-Mem maintains an inference speed comparable to the frozen baseline, enabling high-frequency real-time forecasting.
+
+\paragraph{Space Complexity}
+Gradient-based online learning requires storing optimizer states (e.g., momentum and variance in Adam), which triples the memory footprint of the model parameters $\theta$. In contrast, H-Mem only requires storing the memory bank $\mathcal{M}$ of size $M \times (H \cdot C)$, which is independent of the backbone depth. This significantly reduces the GPU memory requirement, facilitating deployment on resource-constrained hardware.
+
+\begin{table*}[ht]
+    \centering
+    \caption{Performance comparison on the \textbf{ETTm1} dataset. Bold indicates the best result, and underline indicates the second best.}
+    \label{table_ettm1_corrected}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|ccc|ccc|ccc|ccc|ccc|ccc}
+        \hline
+        \hline
+        \multirow{2}{*}{Method} & \multicolumn{3}{c|}{MSE} & \multicolumn{3}{c|}{MAE} & \multicolumn{3}{c|}{RMSE} & \multicolumn{3}{c|}{MAPE} & \multicolumn{3}{c|}{$R^2$} & \multicolumn{3}{c}{RSE} \\
+        & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 \\
+        \hline
+        frozen & 0.609 & 0.797 & 0.852 & 0.479 & 0.564 & 0.591 & 0.781 & 0.893 & 0.923 & 2.255 & 2.698 & 2.865 & 0.765 & 0.692 & 0.671 & 0.485 & 0.555 & 0.574 \\
+        online & 0.615 & 0.773 & 0.916 & 0.489 & 0.552 & 0.604 & 0.784 & 0.879 & 0.957 & 2.316 & 2.605 & 2.801 & 0.763 & 0.701 & 0.646 & 0.487 & 0.546 & 0.595 \\
+        ER     & 0.550 & 0.702 & 0.836 & 0.458 & 0.521 & 0.576 & 0.742 & 0.838 & 0.915 & 2.231 & 2.470 & 2.690 & 0.788 & 0.729 & 0.677 & 0.461 & 0.521 & 0.568 \\
+        DERpp  & 0.550 & 0.705 & 0.829 & 0.456 & 0.522 & 0.572 & 0.742 & 0.839 & 0.911 & 2.201 & \underline{2.468} & 2.677 & 0.788 & 0.728 & 0.680 & 0.461 & 0.522 & 0.566 \\
+        ACL    & 0.557 & 0.709 & 0.840 & 0.460 & 0.525 & 0.578 & 0.747 & 0.842 & 0.916 & 2.240 & 2.501 & 2.683 & 0.785 & 0.726 & 0.676 & 0.464 & 0.523 & 0.569 \\
+        CLSER  & 0.571 & 0.722 & 0.856 & 0.468 & 0.531 & 0.584 & 0.755 & 0.850 & 0.925 & 2.252 & 2.491 & 2.721 & 0.780 & 0.721 & 0.670 & 0.469 & 0.528 & 0.575 \\
+        MIR    & \underline{0.492} & \underline{0.664} & \underline{0.757} & \underline{0.430} & \textbf{0.505} & \underline{0.548} & \underline{0.702} & \underline{0.815} & \underline{0.870} & \underline{2.088} & \textbf{2.422} & \textbf{2.563} & \underline{0.810} & \underline{0.744} & \underline{0.708} & \underline{0.436} & \underline{0.506} & \underline{0.540} \\
+        SOLID  & 0.609 & 0.797 & 0.852 & 0.479 & 0.564 & 0.591 & 0.780 & 0.893 & 0.923 & 2.255 & 2.698 & 2.865 & 0.765 & 0.692 & 0.671 & 0.485 & 0.555 & 0.574 \\
+        \hline
+        \textbf{HMem} & \textbf{0.481} & \textbf{0.645} & \textbf{0.708} & \textbf{0.428} & \underline{0.509} & \textbf{0.536} & \textbf{0.694} & \textbf{0.803} & \textbf{0.842} & \textbf{2.078} & 2.488 & \underline{2.585} & \textbf{0.814} & \textbf{0.751} & \textbf{0.726} & \textbf{0.431} & \textbf{0.499} & \textbf{0.523} \\
+        \hline
+        \hline
+    \end{tabular}}
+\end{table*}
+
+\begin{table*}[ht]
+    \centering
+    \caption{Performance comparison on the \textbf{Weather} dataset. Bold indicates the best result, and underline indicates the second best.}
+    \label{table_weather_corrected}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|ccc|ccc|ccc|ccc|ccc|ccc}
+        \hline
+        \hline
+        \multirow{2}{*}{Method} & \multicolumn{3}{c|}{MSE} & \multicolumn{3}{c|}{MAE} & \multicolumn{3}{c|}{RMSE} & \multicolumn{3}{c|}{MAPE} & \multicolumn{3}{c|}{$R^2$} & \multicolumn{3}{c}{RSE} \\
+        & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 & 24 & 48 & 96 \\
+        \hline
+        frozen & 0.998 & 1.372 & 1.724 & 0.493 & 0.621 & 0.737 & 0.999 & 1.172 & 1.313 & 1.675 & \underline{2.085} & 2.486 & 0.835 & 0.774 & 0.716 & 0.406 & 0.476 & 0.533 \\
+        online & 1.648 & 2.650 & 3.568 & 0.713 & 0.926 & 1.077 & 1.284 & 1.628 & 1.889 & 2.507 & 3.322 & 3.757 & 0.728 & 0.563 & 0.412 & 0.521 & 0.661 & 0.767 \\
+        ER     & 0.962 & 1.329 & \underline{1.716} & 0.494 & 0.620 & 0.743 & 0.981 & 1.153 & \underline{1.310} & 1.773 & 2.228 & 2.593 & 0.841 & 0.781 & \underline{0.717} & 0.398 & 0.468 & \underline{0.532} \\
+        DERpp  & 0.952 & 1.320 & 1.792 & 0.492 & 0.617 & 0.754 & 0.976 & 1.149 & 1.339 & 1.742 & 2.193 & 2.624 & 0.843 & 0.783 & 0.705 & 0.396 & 0.466 & 0.543 \\
+        ACL    & 0.981 & 1.351 & 1.766 & 0.500 & 0.627 & 0.752 & 0.990 & 1.162 & 1.329 & 1.785 & 2.292 & 2.634 & 0.838 & 0.777 & 0.709 & 0.402 & 0.472 & 0.539 \\
+        CLSER  & 1.225 & 1.568 & 1.766 & 0.575 & 0.692 & 0.752 & 1.107 & 1.252 & 1.329 & 2.049 & 2.524 & 2.634 & 0.798 & 0.742 & 0.709 & 0.449 & 0.508 & 0.539 \\
+        MIR    & \underline{0.903} & \underline{1.309} & 1.726 & \underline{0.475} & \underline{0.613} & 0.742 & \underline{0.950} & \underline{1.144} & 1.314 & 2.100 & 2.443 & 2.932 & \underline{0.851} & \underline{0.784} & 0.716 & \underline{0.386} & \underline{0.464} & 0.533 \\
+        SOLID  & 0.998 & 1.372 & 1.724 & 0.493 & 0.621 & \underline{0.737} & 0.999 & 1.171 & 1.313 & \underline{1.675} & \textbf{2.087} & \underline{2.486} & 0.836 & 0.774 & 0.716 & 0.406 & 0.475 & 0.533 \\
+        \hline
+        \textbf{HMem} & \textbf{0.862} & \textbf{1.196} & \textbf{1.514} & \textbf{0.450} & \textbf{0.570} & \textbf{0.682} & \textbf{0.928} & \textbf{1.094} & \textbf{1.230} & \textbf{1.599} & 2.089 & \textbf{2.431} & \textbf{0.858} & \textbf{0.803} & \textbf{0.751} & \textbf{0.377} & \textbf{0.444} & \textbf{0.499} \\
+        \hline
+        \hline
+    \end{tabular}}
+\end{table*}
+
+\begin{table*}[ht]
+    \centering
+    \caption{Performance comparison on the \textbf{Flotation} dataset. Bold indicates the best result, and underline indicates the second best.}
+    \label{table_flotation_horizontal}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|ccc|ccc|ccc|ccc|ccc|ccc}
+        \hline
+        \hline
+        \multirow{2}{*}{Method} & \multicolumn{3}{c|}{MSE} & \multicolumn{3}{c|}{MAE} & \multicolumn{3}{c|}{RMSE} & \multicolumn{3}{c|}{MAPE} & \multicolumn{3}{c|}{$R^2$} & \multicolumn{3}{c}{RSE} \\
+        & 2 & 10 & 24 & 2 & 10 & 24 & 2 & 10 & 24 & 2 & 10 & 24 & 2 & 10 & 24 & 2 & 10 & 24 \\
+        \hline
+        frozen & 1.141 & 1.228 & 1.409 & 0.699 & 0.737 & 0.796 & 1.068 & 1.108 & 1.187 & 4.086 & 4.213 & 4.487 & 0.651 & 0.625 & 0.570 & 0.590 & 0.612 & 0.656 \\
+        online & 1.127 & 1.228 & 1.434 & 0.685 & 0.723 & 0.789 & 1.062 & 1.108 & 1.197 & \underline{3.901} & 4.083 & 4.347 & 0.655 & 0.625 & 0.563 & 0.587 & 0.612 & 0.661 \\
+        er     & 1.125 & 1.223 & 1.413 & 0.684 & 0.721 & 0.782 & 1.061 & 1.106 & 1.189 & \textbf{3.892} & \underline{4.050} & \underline{4.250} & 0.656 & 0.626 & 0.569 & 0.586 & 0.611 & 0.657 \\
+        derpp  & \underline{1.122} & \underline{1.221} & 1.413 & \underline{0.683} & \underline{0.721} & \underline{0.782} & \underline{1.059} & \underline{1.105} & 1.189 & 3.910 & \textbf{4.046} & 4.253 & \underline{0.657} & \underline{0.627} & 0.569 & \underline{0.586} & \underline{0.611} & 0.656 \\
+        acl    & 1.125 & 1.223 & 1.415 & 0.684 & 0.721 & 0.783 & 1.061 & 1.106 & 1.190 & 3.904 & 4.064 & \textbf{4.249} & 0.656 & 0.626 & 0.568 & 0.587 & 0.611 & 0.657 \\
+        clser  & 1.123 & 1.223 & 1.421 & 0.684 & 0.722 & 0.786 & 1.060 & 1.106 & 1.192 & 3.908 & 4.060 & 4.285 & 0.657 & 0.626 & 0.567 & 0.586 & 0.611 & 0.658 \\
+        mir    & 1.171 & 1.251 & 1.417 & 0.703 & 0.735 & 0.789 & 1.082 & 1.119 & 1.190 & 4.037 & 4.284 & 4.355 & 0.642 & 0.618 & 0.568 & 0.598 & 0.618 & 0.657 \\
+        solid  & 1.140 & 1.228 & \underline{1.409} & 0.699 & 0.737 & 0.796 & 1.068 & 1.108 & \underline{1.187} & 4.085 & 4.212 & 4.487 & 0.651 & 0.625 & \underline{0.570} & 0.590 & 0.612 & \underline{0.656} \\
+        \hline
+        \textbf{HMem} & \textbf{1.118} & \textbf{1.214} & \textbf{1.393} & \textbf{0.680} & \textbf{0.721} & \textbf{0.778} & \textbf{1.057} & \textbf{1.102} & \textbf{1.180} & 3.930 & 4.062 & 4.358 & \textbf{0.658} & \textbf{0.629} & \textbf{0.575} & \textbf{0.585} & \textbf{0.609} & \textbf{0.652} \\
+        \hline
+        \hline
+    \end{tabular}}
+\end{table*}
+
+\begin{table*}[ht]
+    \centering
+    \caption{Performance comparison on the \textbf{Grinding} dataset. Bold indicates the best result, and underline indicates the second best.}
+    \label{table_grinding_horizontal}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|ccc|ccc|ccc|ccc|ccc|ccc}
+        \hline
+        \hline
+        \multirow{2}{*}{Method} & \multicolumn{3}{c|}{MSE} & \multicolumn{3}{c|}{MAE} & \multicolumn{3}{c|}{RMSE} & \multicolumn{3}{c|}{MAPE} & \multicolumn{3}{c|}{$R^2$} & \multicolumn{3}{c}{RSE} \\
+        & 15 & 30 & 60 & 15 & 30 & 60 & 15 & 30 & 60 & 15 & 30 & 60 & 15 & 30 & 60 & 15 & 30 & 60 \\
+        \hline
+        frozen & 0.808 & 1.426 & \textbf{2.328} & 0.149 & 0.197 & 0.260 & 0.899 & 1.194 & \textbf{1.526} & 0.601 & \underline{0.756} & \textbf{0.945} & 0.963 & 0.935 & \textbf{0.894} & 0.192 & 0.255 & \textbf{0.325} \\
+        online & 1.717 & 4.941 & 13.329 & 0.197 & 0.282 & 0.479 & 1.310 & 2.223 & 3.651 & 0.737 & 0.974 & 1.501 & 0.922 & 0.775 & 0.394 & 0.279 & 0.474 & 0.778 \\
+        er     & 1.889 & 7.840 & 23.727 & 0.188 & 0.315 & 0.529 & 1.374 & 2.800 & 4.871 & 0.667 & 1.000 & 1.541 & 0.914 & 0.644 & -0.079 & 0.293 & 0.597 & 1.039 \\
+        derpp  & 1.510 & 8.317 & 21.720 & 0.178 & 0.319 & 0.504 & 1.229 & 2.884 & 4.660 & 0.647 & 1.028 & 1.605 & 0.931 & 0.622 & 0.012 & 0.262 & 0.615 & 0.994 \\
+        acl    & 1.878 & 11.634 & 14.592 & 0.187 & 0.335 & 0.459 & 1.370 & 3.411 & 3.820 & 0.662 & 1.044 & 1.370 & 0.915 & 0.471 & 0.336 & 0.292 & 0.727 & 0.815 \\
+        clser  & 1.683 & 8.468 & 14.272 & 0.187 & 0.328 & 0.457 & 1.297 & 2.910 & 3.778 & 0.659 & 0.964 & 1.365 & 0.924 & 0.615 & 0.351 & 0.277 & 0.620 & 0.806 \\
+        mir    & 1.011 & 1.781 & 5.086 & 0.156 & 0.211 & 0.314 & 1.006 & 1.334 & 2.255 & 0.645 & 0.867 & 1.085 & 0.954 & 0.919 & 0.769 & 0.214 & 0.285 & 0.481 \\
+        solid  & \underline{0.796} & \underline{1.423} & \underline{2.328} & \underline{0.148} & \underline{0.196} & \underline{0.260} & \underline{0.892} & \underline{1.193} & \underline{1.526} & \textbf{0.599} & \textbf{0.756} & \underline{0.945} & \underline{0.964} & \underline{0.935} & \underline{0.894} & \underline{0.190} & \underline{0.254} & \underline{0.325} \\
+        \hline
+        \textbf{HMem} & \textbf{0.633} & \textbf{1.328} & 2.473 & \textbf{0.131} & \textbf{0.181} & \textbf{0.245} & \textbf{0.796} & \textbf{1.152} & 1.573 & \underline{0.600} & 0.780 & 0.947 & \textbf{0.971} & \textbf{0.940} & 0.888 & \textbf{0.170} & \textbf{0.246} & 0.335 \\
+        \hline
+        \hline
+    \end{tabular}}
+\end{table*}
+
+%{\appendices
+%\section*{Proof of the First Zonklar Equation}
+%Appendix one text goes here.
+% You can choose not to have a title for an appendix if you want by leaving the argument blank
+%\section*{Proof of the Second Zonklar Equation}
+%Appendix two text goes here.}
+
+
+
+\section{References Section}
+You can use a bibliography generated by BibTeX as a .bbl file.
+ BibTeX documentation can be easily obtained at:
+ http://mirror.ctan.org/biblio/bibtex/contrib/doc/
+ The IEEEtran BibTeX style support page is:
+ http://www.michaelshell.org/tex/ieeetran/bibtex/
+ 
+ % argument is your BibTeX string definitions and bibliography database(s)
+%\bibliography{IEEEabrv,../bib/paper}
+%
+\section{Simple References}
+You can manually copy in the resultant .bbl file and set second argument of $\backslash${\tt{begin}} to the number of references
+ (used to reserve space for the reference number labels box).
+
+\begin{thebibliography}{1}
+\bibliographystyle{IEEEtran}
+
+\bibitem{ref1}
+{\it{Mathematics Into Type}}. American Mathematical Society. [Online]. Available: https://www.ams.org/arc/styleguide/mit-2.pdf
+
+\bibitem{ref2}
+T. W. Chaundy, P. R. Barrett and C. Batey, {\it{The Printing of Mathematics}}. London, U.K., Oxford Univ. Press, 1954.
+
+\bibitem{ref3}
+F. Mittelbach and M. Goossens, {\it{The \LaTeX Companion}}, 2nd ed. Boston, MA, USA: Pearson, 2004.
+
+\bibitem{ref4}
+G. Gr\"atzer, {\it{More Math Into LaTeX}}, New York, NY, USA: Springer, 2007.
+
+\bibitem{ref5}M. Letourneau and J. W. Sharp, {\it{AMS-StyleGuide-online.pdf,}} American Mathematical Society, Providence, RI, USA, [Online]. Available: http://www.ams.org/arc/styleguide/index.html
+
+\bibitem{ref6}
+H. Sira-Ramirez, ``On the sliding mode control of nonlinear systems,'' \textit{Syst. Control Lett.}, vol. 19, pp. 303--312, 1992.
+
+\bibitem{ref7}
+A. Levant, ``Exact differentiation of signals with unbounded higher derivatives,''  in \textit{Proc. 45th IEEE Conf. Decis.
+Control}, San Diego, CA, USA, 2006, pp. 5585--5590. DOI: 10.1109/CDC.2006.377165.
+
+\bibitem{ref8}
+M. Fliess, C. Join, and H. Sira-Ramirez, ``Non-linear estimation is easy,'' \textit{Int. J. Model., Ident. Control}, vol. 4, no. 1, pp. 12--27, 2008.
+
+\bibitem{ref9}
+R. Ortega, A. Astolfi, G. Bastin, and H. Rodriguez, ``Stabilization of food-chain systems using a port-controlled Hamiltonian description,'' in \textit{Proc. Amer. Control Conf.}, Chicago, IL, USA,
+2000, pp. 2245--2249.
+
+\end{thebibliography}
+
+
+\newpage
+
+\section{Biography Section}
+If you have an EPS/PDF photo (graphicx package needed), extra braces are
+ needed around the contents of the optional argument to biography to prevent
+ the LaTeX parser from getting confused when it sees the complicated
+ $\backslash${\tt{includegraphics}} command within an optional argument. (You can create
+ your own custom macro containing the $\backslash${\tt{includegraphics}} command to make things
+ simpler here.)
+ 
+\vspace{11pt}
+
+\bf{If you include a photo:}\vspace{-33pt}
+\begin{IEEEbiography}[{\includegraphics[width=1in,height=1.25in,clip,keepaspectratio]{fig1}}]{Michael Shell}
+Use $\backslash${\tt{begin\{IEEEbiography\}}} and then for the 1st argument use $\backslash${\tt{includegraphics}} to declare and link the author photo.
+Use the author name as the 3rd argument followed by the biography text.
+\end{IEEEbiography}
+
+\vspace{11pt}
+
+\bf{If you will not include a photo:}\vspace{-33pt}
+\begin{IEEEbiographynophoto}{John Doe}
+Use $\backslash${\tt{begin\{IEEEbiographynophoto\}}} and the author name as the argument followed by the biography text.
+\end{IEEEbiographynophoto}
+
+
+
+
+\vfill
+
+\end{document}
+
+

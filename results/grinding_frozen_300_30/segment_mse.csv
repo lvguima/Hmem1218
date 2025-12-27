@@ -1,0 +1,4 @@
+segment,method,mse_mean
+Early,frozen,0.05548197406032918
+Middle,frozen,0.04932623842191454
+Late,frozen,4.0914007092948514

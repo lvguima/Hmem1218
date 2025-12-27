@@ -8,7 +8,9 @@ from data_provider.data_factory import get_dataset
 from exp.exp_basic import Exp_Basic
 from util.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop, load_model_compile
 from util.metrics import metric, update_metrics, calculate_metrics
-from util.online_curve import compute_step_mse, save_online_curve_csv
+from util.online_curve import compute_step_mse, save_online_curve_csv, resolve_method_name
+from util.runtime_profile import init_runtime_log, log_runtime_step, finalize_runtime_log
+from util.test_summary import save_test_summary
 
 import torch
 import torch.nn as nn
@@ -247,14 +249,40 @@ class Exp_Main(Exp_Basic):
         self.model.eval()
         statistics = {k: 0 for k in ['total', 'y_sum', 'MSE', 'MAE']}
         step_mse = []
+        runtime_handle = None
+        runtime_writer = None
+        runtime_dir = None
+        ms_values = []
+        sps_values = []
+        memory_mb = None
+        if self.args.use_gpu:
+            torch.cuda.reset_peak_memory_stats()
+        if getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
+            method_name = resolve_method_name(self.args, override="frozen")
+            runtime_handle, runtime_writer, runtime_dir = init_runtime_log(self.args, method_name)
+
         with torch.no_grad():
             for i, batch in enumerate(test_loader):
+                if runtime_writer is not None:
+                    if self.args.use_gpu:
+                        torch.cuda.synchronize()
+                    start_time = time.perf_counter()
                 outputs = self.forward(batch)
                 true = batch[self.label_position]
                 if not self.args.pin_gpu:
                     true = true.to(self.device)
                 update_metrics(outputs, true, statistics, target_variate)
                 step_mse.extend(compute_step_mse(outputs, true, target_variate))
+                if runtime_writer is not None:
+                    if self.args.use_gpu:
+                        torch.cuda.synchronize()
+                    elapsed = time.perf_counter() - start_time
+                    batch_size = int(true.shape[0]) if hasattr(true, 'shape') else 1
+                    ms = elapsed * 1000.0
+                    sps = batch_size / elapsed if elapsed > 0 else float("nan")
+                    log_runtime_step(runtime_writer, i, ms, sps)
+                    ms_values.append(ms)
+                    sps_values.append(sps)
 
         metrics = calculate_metrics(statistics)
         mse, mae = metrics['MSE'], metrics['MAE']
@@ -263,9 +291,33 @@ class Exp_Main(Exp_Basic):
         r2 = metrics.get('R2', 0.0)
         mape = metrics.get('MAPE', 0.0)
         print('MSE:{:.6f}, MAE:{:.6f}, RMSE:{:.6f}, RSE:{:.6f}, R2:{:.6f}, MAPE:{:.6f}'.format(mse, mae, rmse, rse, r2, mape))
+        if self.args.use_gpu:
+            torch.cuda.synchronize()
+            memory_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
         if getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
             window = getattr(self.args, 'rolling_window', 500)
-            save_online_curve_csv(self.args, step_mse, method_name='Frozen', window=window)
+            method_name = resolve_method_name(self.args, override="frozen")
+            save_online_curve_csv(self.args, step_mse, method_name=method_name, window=window)
+            model = self._model
+            params_total = sum(p.numel() for p in model.parameters())
+            params_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            save_test_summary(
+                self.args,
+                method_name,
+                {
+                    "mse": mse,
+                    "mae": mae,
+                    "rmse": rmse,
+                    "rse": rse,
+                    "r2": r2,
+                    "mape": mape,
+                },
+                params_total=params_total,
+                params_trainable=params_trainable,
+                memory_mb=memory_mb,
+            )
+            if runtime_writer is not None:
+                finalize_runtime_log(runtime_handle, runtime_dir, ms_values, sps_values)
         return mse, mae, test_data, test_loader
 
     def predict(self, path, setting, load=False):

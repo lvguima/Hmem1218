@@ -1,0 +1,4 @@
+segment,method,mse_mean
+Early,mir,0.5381258529603083
+Middle,mir,0.7444790003774164
+Late,mir,0.7075596593750962

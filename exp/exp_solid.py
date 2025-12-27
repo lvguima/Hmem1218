@@ -16,7 +16,9 @@ from torch import optim
 import warnings
 import copy
 from util.metrics import update_metrics, calculate_metrics
-from util.online_curve import compute_step_mse, save_online_curve_csv
+from util.online_curve import compute_step_mse, save_online_curve_csv, resolve_method_name
+from util.runtime_profile import init_runtime_log, log_runtime_step, finalize_runtime_log
+from util.test_summary import save_test_summary
 from util.tools import test_params_flop
 
 warnings.filterwarnings('ignore')
@@ -144,6 +146,18 @@ class Exp_SOLID(Exp_Online):
         criterion = nn.MSELoss()
         statistics = {k: 0 for k in ['total', 'y_sum', 'MSE', 'MAE']}
         step_mse = []
+        runtime_handle = None
+        runtime_writer = None
+        runtime_dir = None
+        ms_values = []
+        sps_values = []
+        runtime_step = 0
+        memory_mb = None
+        if phase == 'test' and self.args.use_gpu:
+            torch.cuda.reset_peak_memory_stats()
+        if phase == 'test' and getattr(self.args, 'local_rank', -1) <= 0:
+            method_name = resolve_method_name(self.args, override="solid")
+            runtime_handle, runtime_writer, runtime_dir = init_runtime_log(self.args, method_name)
         if not self.args.continual:
             if not self.args.whole_model:
                 pretrained_state_dict = copy.deepcopy(self.final_head.state_dict())
@@ -152,6 +166,10 @@ class Exp_SOLID(Exp_Online):
         for i, batch in enumerate(tqdm(test_loader, mininterval=10, disable=True)):
             if i < self.test_train_num + self.pred_len - 1:
                 continue
+            if runtime_writer is not None:
+                if self.args.use_gpu:
+                    torch.cuda.synchronize()
+                start_time = time.perf_counter()
             batch_x, batch_y, batch_x_mark, batch_y_mark = batch
             batch_x = batch_x.to(self.device)
 
@@ -201,6 +219,17 @@ class Exp_SOLID(Exp_Online):
                     true = true.to(self.device)
                 update_metrics(outputs, true, statistics, target_variate)
                 step_mse.extend(compute_step_mse(outputs, true, target_variate))
+            if runtime_writer is not None:
+                if self.args.use_gpu:
+                    torch.cuda.synchronize()
+                elapsed = time.perf_counter() - start_time
+                batch_size = int(batch_y.shape[0]) if hasattr(batch_y, 'shape') else 1
+                ms = elapsed * 1000.0
+                sps = batch_size / elapsed if elapsed > 0 else float("nan")
+                log_runtime_step(runtime_writer, runtime_step, ms, sps)
+                ms_values.append(ms)
+                sps_values.append(sps)
+                runtime_step += 1
             if not self.args.continual:
                 if not self.args.whole_model:
                     self.final_head.load_state_dict(pretrained_state_dict)
@@ -215,7 +244,31 @@ class Exp_SOLID(Exp_Online):
         print('MSE:{:.6f}, MAE:{:.6f}, RMSE:{:.6f}, RSE:{:.6f}, R2:{:.6f}, MAPE:{:.6f}'.format(mse, mae, rmse, rse, r2, mape))
         if phase == 'test' and getattr(self.args, 'border_type', None) == 'online' and getattr(self.args, 'local_rank', -1) <= 0:
             window = getattr(self.args, 'rolling_window', 500)
-            save_online_curve_csv(self.args, step_mse, method_name='SOLID', window=window)
+            method_name = resolve_method_name(self.args, override="solid")
+            save_online_curve_csv(self.args, step_mse, method_name=method_name, window=window)
+            if self.args.use_gpu:
+                torch.cuda.synchronize()
+                memory_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+            model = self._model
+            params_total = sum(p.numel() for p in model.parameters())
+            params_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            save_test_summary(
+                self.args,
+                method_name,
+                {
+                    "mse": mse,
+                    "mae": mae,
+                    "rmse": rmse,
+                    "rse": rse,
+                    "r2": r2,
+                    "mape": mape,
+                },
+                params_total=params_total,
+                params_trainable=params_trainable,
+                memory_mb=memory_mb,
+            )
+            if runtime_writer is not None:
+                finalize_runtime_log(runtime_handle, runtime_dir, ms_values, sps_values)
         if self.args.do_predict:
             return mse, mae, online_data, predictions
         else:

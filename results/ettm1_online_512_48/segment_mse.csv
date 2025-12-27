@@ -1,0 +1,4 @@
+segment,method,mse_mean
+Early,online,0.6244993742079255
+Middle,online,0.8868953538650458
+Late,online,0.8067138616749945

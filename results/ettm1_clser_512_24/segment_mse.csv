@@ -1,0 +1,4 @@
+segment,method,mse_mean
+Early,clser,0.46655293457000374
+Middle,clser,0.6432791769956613
+Late,clser,0.6013865735668324
