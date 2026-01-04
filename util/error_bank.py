@@ -508,6 +508,7 @@ class CHRC(nn.Module):
         use_refinement: bool = True,
         trust_threshold: float = 0.5,
         gate_steepness: float = 10.0,
+        gate_mode: str = 'adaptive',
         use_horizon_mask: bool = False,
         horizon_mask_mode: str = 'exp',
         horizon_mask_decay: float = 0.98,
@@ -528,6 +529,7 @@ class CHRC(nn.Module):
         self.use_refinement = use_refinement
         self.trust_threshold = trust_threshold
         self.gate_steepness = gate_steepness
+        self.gate_mode = str(gate_mode).lower()
         self.use_horizon_mask = use_horizon_mask
         self.horizon_mask_mode = horizon_mask_mode
         self.horizon_mask_decay = horizon_mask_decay
@@ -730,7 +732,13 @@ class CHRC(nn.Module):
 
         # Modulate confidence by retrieval quality and validity
         has_valid_retrieval = valid_mask.any(dim=-1, keepdim=True).float()
-        effective_confidence = confidence * retrieval_quality * similarity_gate * has_valid_retrieval
+        if self.gate_mode == 'fixed':
+            effective_confidence = has_valid_retrieval
+            confidence = torch.ones_like(confidence)
+            retrieval_quality = torch.ones_like(retrieval_quality)
+            similarity_gate = torch.ones_like(similarity_gate)
+        else:
+            effective_confidence = confidence * retrieval_quality * similarity_gate * has_valid_retrieval
 
         # Apply correction
         corrected = prediction + effective_confidence.unsqueeze(-1) * correction

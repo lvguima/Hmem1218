@@ -11,7 +11,8 @@ def resolve_method_name(args, override=None, default="frozen"):
 
 def results_dir(args, method_name):
     dataset = str(getattr(args, "dataset", "data")).lower()
-    folder = f"{dataset}_{method_name}_{args.seq_len}_{args.pred_len}"
+    tag = str(getattr(args, "tag", "") or "")
+    folder = f"{dataset}_{method_name}_{args.seq_len}_{args.pred_len}{tag}"
     return os.path.join("results", folder)
 
 

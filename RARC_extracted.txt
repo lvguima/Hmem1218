@@ -1,0 +1,2576 @@
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+1
+
+Retrieval-Augmented Residual Correction Framework for Online Soft
+
+Sensor in Non-Stationary Industrial Processes
+
+Abstract—In non-stationary industrial processes, operating
+conditions drift over time due to factors such as raw material
+variability, equipment aging, and control strategies change,
+meanwhile, reliable quality measurements are often delayed
+due to laboratory assays or downstream measurements. These
+chanllengs causes offline-trained soft sensor models to rapidly
+lose performance and makes current gradient-based online adap-
+tation methods instability under sparse and delayed supervision.
+We propose the Retrieval-Augmented Residual Correction (R-
+ARC) framework, a strictly causal online learning method that
+adapts soft sensors without updating backbone parameters. R-
+ARC keeps a pre-trained backbone frozen to provide stable
+base predictions, and performs reliability-controlled retrieval
+correction by retrieving historical residual trajectories from an
+external memory bank. Retrieval query is a condition con-
+text snippet that captures the current operating condition and
+drift representations. Residuals are written into memory only
+after the corresponding horizon is observed, and the applied
+correction is reliability-controlled to suppress negative transfer
+under state aliasing and long-horizon uncertainty. Extensive
+experiments across public benchmarks and real-world industrial
+processes demonstrate that R-ARC delivers superior accuracy,
+stability, and practical efficiency, which highlights its potential
+for sustainable long-term deployment of soft sensors in drifting
+environments.
+
+Index Terms—Soft Sensor, Concept Drift, Continual Learning,
+
+Industrial process
+
+I. INTRODUCTION
+
+I N the global background of Industry 4.0 and intelligent
+
+manufacturing, process industries such as chemical en-
+gineering, petroleum refining, non-ferrous metallurgy, and
+wastewater treatment—are undergoing a profound paradigm
+shift from automation to intelligence. Under this background,
+soft sensor technology has emerged as a vital component of
+process monitoring [1]. By utilizing easy-to-measure variables
+to infer key quality indicators in real-time, soft sensor effec-
+tively resolves the challenge of significant time delays inherent
+in traditional offline analysis, thereby greatly enhancing the
+responsiveness and stability of control systems [2].
+
+However, despite significant achievements in theoretical re-
+search and preliminary applications, the large-scale, long-term
+deployment of soft sensors in industrial scenarios remains con-
+strained by a severe and widespread challenge: non-stationarity
+[3]. Industrial environments are not idealized static systems but
+complex, time-varying environments characterized by dynamic
+evolution. The interplay of various physical and chemical
+factors—such as equipment fouling, fluctuations in raw mate-
+rial properties, and external environmental changes—induces
+concept drift in the statistical characteristics of process data.
+This drift causes static global models trained on historical data
+to gradually deviate from actual operating conditions, leading
+to the degradation of soft sensor performance, which severely
+
+compromises real-time decision-making and downstream op-
+timization control. Table I systematically summarizes five
+typical types of concept drift in industrial processes. In real-
+world industrial sites, these drifts exhibit diverse time scales
+and statistical features, ranging from transient abrupt shifts to
+long-term gradual evolutions, imposing distinct adaptability
+requirements on soft sensor models.
+
+To address the diverse drifts illustrated in Table I, research
+focus in both academia and industry has shifted from static
+modeling to dynamic techniques capable of online adaptation
+[4]. Early adaptive approaches were primarily based on re-
+cursive identification theory, such as recursive least squares-
+based methods [5]. These methods employ forgetting factors
+to dynamically adjust memory length, attempting to balance
+tracking agility with noise suppression. However, simple re-
+cursive updates often struggle to capture the strong nonlinear
+dynamics of complex industrial processes and are vulnerable
+to interference from high-dimensional collinear data.
+
+To tackle both nonlinearity and non-stationarity, the Just-
+In-Time Learning (JITL) paradigm has emerged [6]. It aban-
+dons the conventional global modeling paradigm, and instead
+shifts towards constructing local models in real-time for each
+sample. The efficacy of JITL depends on the definition of
+similarity. The traditional Euclidean distance often fails to
+account for the multivariate coupling of industrial data. Recent
+work has integrated weighted JITL with LSTM to capture
+the spatio-temporal characteristics of unit
+loads by histor-
+ical data retrieval [6], which enhances prediction accuracy
+by combining online local modeling with temporal pattern
+attention. An improved JITL strategy was proposed to enhance
+query efficiency and reliability by integrating clustering to
+substantially reduce the search range and fusing distance-
+and angle-based similarity metrics to obtain more reliable
+similar samples for multimodal quality monitoring [8]. Despite
+its success in handling nonlinearity, this online retrieval and
+modeling mechanism of JITL imposes computational latency
+and storage burdens in high-frequency sampling environments,
+and its performance is severely constrained by label sparsity
+due to the inherent delays in manual measurements.
+
+To adapt deep neural networks to dynamic industrial envi-
+ronments, early attempts focused on accommodating new data
+streams by simply fine-tuning network parameters [9]. How-
+ever, such methods must balance the classic stability-plasticity
+dilemma: models require sufficient plasticity to rapidly adapt
+to new conditions while maintaining high stability to prevent
+the catastrophic forgetting of historical knowledge. To mitigate
+this issue, a growing body of research on Continual Learning
+(CL) has emerged [10]. For instance, Huang et al. proposed
+an incremental rank continual dictionary learning framework
+[11]. By abandoning a single shared model update strat-
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+2
+
+TABLE I
+SUMMARY OF CONCEPT DRIFT IN INDUSTRIAL PROCESSES
+
+Drift Type
+
+Statistical Evolution Characteristics
+
+Typical Industrial Physics Examples
+
+Sudden Drift
+
+Gradual Drift
+
+Incremental Drift
+
+Reoccurring Drift
+
+Open-world Drift
+
+The data distribution undergoes a step-like change in an instant,
+with statistical properties exhibiting a cliff-like jump.
+Focus on State Transition: Process states shift slowly from one
+mode to another over a period. The new distribution gradually
+replaces the old one.
+Focus on Continuous Evolution: Process variables show a contin-
+uous, smooth, and unidirectional trend over time, often resembling
+a ”ramp” change.
+Process states cycle or switch irregularly among multiple known
+historical distribution modes.
+Emergence of entirely new distribution patterns never covered in
+the training space, representing exploration of unknown regions.
+
+Critical sensor failure, change of raw material suppliers, switching
+of production lines or reactors.
+Mechanical wear of components, decline in catalyst activity, slow
+changes in raw material properties (e.g., ore grade variation in
+mining).
+Gradual fouling of heat exchangers (continuous efficiency drop),
+sensor drift due to aging, continuous accumulation of impurities
+in a reactor.
+Seasonal ambient temperature variations, electricity load cycles
+driven by day/week, operation patterns change by day/night shift.
+Introduction of novel raw material types or recipes, occurrence
+of unrecorded equipment failure modes or extreme operating
+conditions.
+
+egy, they introduced a low-rank matrix augmentation mech-
+anism that trains and freezes independent parameters for each
+new mode, thereby achieving zero-forgetting monitoring of
+multi-mode processes. Another mainstream category relies on
+regularization-based strategies. Zhang et al. integrated elastic
+weight consolidation into probabilistic slow feature analysis
+and recursive principal component analysis [12]. By evaluat-
+ing parameter importance via the Fisher information matrix
+and applying quadratic penalties, these methods effectively
+constrain the drift of critical parameters while updating the
+model to capture slow features.
+
+Although the aforementioned continual learning-based stud-
+ies on process monitoring and fault diagnosis have made
+progress in handling the drifts in non-stationary processes [13],
+[14], [15], it must be noted that these works primarily address
+Classification or Anomaly Detection tasks. In soft sensor field,
+Wu et al. [16] made a preliminary attempt by introducing a
+dual-buffer replay mechanism. Although targeting regression,
+their approach essentially relies on partitioning the data stream
+into distinct tasks based on error thresholds for isolated train-
+ing and replay. However, Such hard-boundary task partitioning
+struggles to seamlessly track and adapt to the continuous,
+in complex industrial
+smooth manifold evolution inherent
+processes, where distinct task boundaries rarely exist.
+
+Consequently, a significant gap remains in online learning
+research specifically for Soft Sensor regression tasks under
+non-stationary conditions. Compared to classification, regres-
+sion faces more severe and fundamentally different challenges
+when confronting the drifts described in Table I, as detailed
+below:
+
+• Sensitivity to Gradual and Incremental Drift: Many
+process-monitoring classification/detection systems effec-
+tively operate with a tolerance margin (e.g., decision-
+boundary slack or thresholding), so small shifts may
+not immediately trigger a discrete decision change. In
+contrast, soft sensor is a regression task with a continuous
+output space: even mild gradual drift can translate directly
+into a persistent numerical bias or scale error. Conse-
+quently, regression models cannot rely on the coarse-
+grained adaptation strategies used in classification; they
+demand a high-sensitivity correction mechanism capable
+
+of responding to continuous numerical deviations in real
+time.
+
+• Temporal Continuity in Drift Dynamics: Under non-
+stationarity, forecasting errors in industrial processes of-
+ten exhibit structured, horizon-dependent shapes caused
+by process dynamics. Therefore, a single instantaneous
+error value is ambiguous: it reflects the magnitude but
+loses directional information about the drift’s evolution.
+Effective adaptation requires capturing the temporal co-
+herence of the deviation. Soft sensor thus benefits from
+modeling and reusing residual trajectories as correction
+templates, enabling coherent cross-horizon compensation
+when similar error signatures reoccur.
+
+• Reliability-Controlled Correction under Delayed
+Feedback: In online soft sensor, supervision is often
+delayed, so aggressive adaptation/correction cannot be
+verified immediately and may amplify errors when the
+current mode is novel or the retrieval is ambiguous. Prac-
+tical deployment therefore demands a fail-safe correction
+mechanism: the model should apply strong correction
+only when evidence indicates high reliability, and oth-
+erwise suppress correction and fall back to a stable base
+prediction. This makes reliability-controlled correction a
+key requirement.
+
+• Contextual Ambiguity in Retrieval: Most retrieval-
+based adaptive methods rely solely on input similarity
+to locate historical reference samples. However, in non-
+stationary industrial systems, the mapping from inputs to
+outputs is one-to-many depending on the latent relation-
+ship. Two similar inputs may yield different outcomes
+due to underlying relationship shift. Relying exclusively
+on input similarity may cause the retrieval of contextually
+mismatched error patterns (negative transfer). Effective
+adaptation requires a more informative, strictly causal
+query that reflects the current operating condition and
+deviation pattern, rather than only the instantaneous mea-
+surements.
+
+In summary, directly applying classification-oriented contin-
+ual learning strategies fails to meet the stringent requirements
+of soft sensor: they lack the mechanism for high-precision
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+3
+
+numerical correction, struggle to track continuous manifold
+evolution, and offer no ”fail-safe” guarantee against open-
+world drifts. Consequently, there is an urgent need to develop
+an online learning mechanism tailored specifically for the
+characteristics of regression-based soft sensors.
+
+these
+
+To address
+
+challenges, we propose Retrieval-
+Augmented Residual Correction (R-ARC) framework, an on-
+line adaptation method that explicitly learns from delayed
+errors. R-ARC follows a non-parametric “retrieve-and-correct”
+paradigm: a frozen backbone provides stable base predic-
+tions, while a lightweight retrieval module named Residual
+Retrieval Corrector (RRC)—queries a memory bank of his-
+torical residual trajectories to correct the current multi-step
+forecast. Instead of updating model parameters with scarce
+and delayed labels, R-ARC explicitly decouples the learning
+of global trends from local biases, storing error patterns only
+when the ground truth becomes available to ensure strict
+temporal causality. To build a robust retrieval query under
+non-stationarity, RRC uses a Condition Context Snippet: a
+short, causally available representation of the current operating
+condition and deviation pattern to retrieve residual patterns
+transferable to the current condition. Moreover, the correction
+is modulated by horizon-aware masking and adaptive confi-
+dence gating, effectively acting as a risk controller to prevent
+negative transfer when long-horizon predictions are uncertain
+or retrieval confidence is low.
+
+The main contributions of this paper are summarized as
+
+follows:
+
+• A Plug-and-Play Online learning Framework: We
+propose R-ARC, a decoupled architecture that seamlessly
+integrates a frozen, model-agnostic backbone for stability
+with a retrieval-based corrector for plasticity. This design
+enables strictly causal online adaptation via residual
+retrieval rather than gradient updates, which allows it
+to serve as a general-purpose enhancement for various
+forecasting models.
+
+• Strictly Causal Learning under Delayed Feedback: To
+address substantial label delays in industrial soft sensor,
+we design a strictly causal memory update protocol
+that caches prediction contexts and writes the residual
+trajectory only when the delayed ground truth becomes
+available. This delayed-write mechanism ensures physical
+causality while allowing the system to learn from delayed
+errors for future online correction.
+
+• Context-Aware Retrieval with Reliability-Gated Cor-
+rection: To mitigate state aliasing and negative transfer,
+we introduce the Condition Context Snippet as a causal
+fingerprint to identify the current operating condition.
+and couple retrieval with reliability-aware gating that
+adaptively modulates the correction results. This design
+provides a safe-correction behavior.
+
+• Industrial Validation: Extensive experiments on pub-
+lic benchmarks and two real-world industrial processes
+demonstrate that R-ARC achieved significantly perfor-
+mance. The results highlight its superior accuracy, ef-
+ficiency, and robustness against catastrophic forgetting,
+suggesting great potential for sustainable long-term de-
+ployment in non-stationary industrial environments.
+
+The remainder of this paper is organized as follows. Section
+II formalizes the problem of online soft sensor under delayed
+feedback and details the proposed R-ARC framework. Section
+III presents the experimental setup and provides a compre-
+hensive analysis of the results on both public benchmarks and
+real-world industrial datasets. Finally, Section IV concludes
+the paper and discusses future research directions.
+
+II. METHODOLOGY
+
+A. Problem Formulation
+
+In real-world processes, operating conditions continuously
+drift due to fluctuating raw materials, equipment wear, and
+periodic operators day/night shifts. Meanwhile, reliable su-
+pervision can be significantly delayed because key quality
+variables are obtained through downstream measurements or
+labor-intensive laboratory assays. For instance, in flotation,
+the concentrate grade often requires manual sampling and
+chemical analysis and may only be available hours later, which
+inherently causes model updating and control lag. Therefore,
+we formulate online soft sensor modeling as a learning prob-
+lem under non-stationarity and delayed supervision.
+
+Let a multivariate data stream be denoted by {xt}T
+
+t=1 with
+C variables. At each time step t, the forecaster observes a
+length-L look-back window Xt = [xt−L+1, . . . , xt] ∈ RL×C
+and outputs a multi-horizon forecast ˆYt = [ˆxt+1, . . . , ˆxt+H ] ∈
+RH×C for horizon H. The corresponding ground truth horizon
+Yt becomes fully observable only after the horizon elapses
+(i.e., after H steps), which induces delayed supervision in
+online settings.
+
+Our goal is to maintain an online forecaster ft that min-
+imizes the cumulative loss (cid:80)T
+the
+adaptation process is constrained by delayed supervision: any
+update (e.g., parameter tuning or memory insertion) performed
+at time t is restricted to access ground truth Yk only where
+k ≤ t − H, strictly preserving physical causality.
+
+t=1 ℓ( ˆYt, Yt). Crucially,
+
+B. Overview of R-ARC
+
+To address drift under delayed feedback, we propose R-
+ARC, a residual-memory retrieval correction framework that
+decouples stable forecasting from fast adaptation. As shown
+in Fig.II-B, R-ARC consists of:
+
+1) Frozen backbone. To maintain stability of the predic-
+tion, a pre-trained forecaster fθ produces a base forecast
+ˆYbase
+. During the online phase, θ is kept fixed to pre-
+t
+serve generalizable temporal representations and avoid
+catastrophic forgetting under noisy short-term drift.
+2) Residual Retrieval Corrector. To enable plasticity of
+the prediction, a lightweight module, Residual Retrieval
+Corrector (RRC), maintains an external residual mem-
+ory of historical residual trajectories and produces an
+additive correction for the whole horizon.
+
+3) Causal Memory Evolution. R-ARC caches prediction
+contexts and writes their realized residuals into mem-
+ory only after the corresponding ground truth becomes
+available, strictly adhering to the physical constraints of
+feedback latency.
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+4
+
+Fig. 1. Overall framework of R-ARC. A frozen backbone produces the base multi-horizon forecast, while the RRC module retrieves and aggregates historical
+residual trajectories using a causally available Condition Context Snippet as the query, then applies horizon-aware masking and confidence gating to form
+an additive correction. Residuals are written into memory only when delayed ground truth arrives, ensuring strict causality.
+
+C. Condition Context Snippet
+
+Retrieval-based adaptation hinges on querying a memory
+bank to estimate and compensate for the backbone’s potential
+error. A core question is what should be used as the retrieval
+key. In non-stationary industrial streams, similar local patterns
+may arise from different latent operating conditions, leading to
+divergent future outcomes and error modes. R-ARC therefore
+uses a condition context snippet as a compact, causal repre-
+sentation of the current operating condition and its systematic
+deviation pattern, making the key explicitly encode both local
+dynamics and state scale to reduce noise-induced mismatches
+and help the encoder learn more stable separations between
+modes for retrieval.
+
+We first extract a strictly causal raw snippet Graw
+
+t ∈ RP ×C
+
+with length
+
+P = max(1, ⌊rH⌋),
+
+r ∈ (0, 1].
+
+(1)
+
+To make the representation both discriminative and noise-
+robust, we augment the raw trajectory with a small set of
+per-variable statistic tokens that summarize the local state.
+Concretely, we compute summary vectors over the same causal
+window, including mean µt, standard deviation σt, trend/slope
+βt, and variation νt, each in RC, and append them as tokens:
+
+˜Gt = (cid:2)Graw
+
+t
+
+; µt; σt; βt; νt
+
+(cid:3) ∈ R(P +4)×C.
+
+(2)
+
+This design lets the encoder simultaneously perceive the
+shape and the state summary, thus improving nearest-neighbor
+stability under measurement noise and reducing ambiguity
+across different modes, and we prefer a short, causal snippet
+over the full historical window because, under non-stationarity,
+the most recent measurements provide the clearest and most
+mode-specific evidence of incipient drift, while long windows
+
+may mix multiple historical modes and dilute the represen-
+tation; moreover, a concise key emphasizes the components
+most predictive of systematic error modes (e.g., bias or lag),
+leading to more stable nearest-neighbor retrieval within the
+same mode.
+
+In practice, ˜Gt acts as a timely descriptor for the latent
+process state, particularly when supervision is delayed. For ex-
+ample, in flotation where concentrate-grade labels arrive hours
+later via offline assays, an immediate shift in fast variables
+(e.g., airflow, pressure) changes both the raw trajectory and its
+summary tokens. By retrieving residual trajectories associated
+with similar representations, R-ARC can proactively correct
+the backbone’s forecasting bias before the delayed ground
+truth becomes available.
+
+D. Residual-Trajectory Memory Bank and Retrieval Query
+
+Fig. 2 summarizes the internal workflow of RRC, and the
+
+following subsections detail its key steps.
+
+1) Base Forecast and Residual Trajectory: Given Xt and
+
+optional time features St, the frozen backbone outputs:
+
+ˆYbase
+
+t = fθ(Xt, St) ∈ RH×C.
+When the full ground truth becomes available, we compute
+the realized residual trajectory over the whole horizon:
+
+(3)
+
+Et = Yt − ˆYbase
+
+t ∈ RH×C.
+
+(4)
+
+In many industrial processes, operating-condition changes tend
+to induce systematic forecasting errors that often manifest as
+structured, horizon-dependent error shapes reflecting process
+dynamics and delays (e.g., bias that grows with horizon due
+to unmodeled propagation, phase lag induced by measure-
+ment delay, or feature-coupled deviations). A single-step or
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+5
+
+Internal workflow of RRC. The corrector encodes the Condition Context Snippet into a query key, retrieves top-K residual trajectories from a
+Fig. 2.
+bucketed memory, aggregates them into a candidate correction, and then applies horizon-aware masking and confidence gating to prevent negative transfer
+under non-stationarity.
+
+aggregated error cannot preserve these patterns, whereas a full
+residual trajectory provides a reusable multi-horizon correction
+template. We construct a Residual-Trajectory Memory Bank,
+which archives these structured error shapes as historical ex-
+periences. These templates can then be retrieved under similar
+representations and applied coherently across H, yielding
+horizon-consistent correction rather than uncoordinated per-
+step adjustments.
+
+2) Context Snippet Encoding and Similarity Vector: We
+encode the augmented snippet ˜Gt using a lightweight causal
+temporal encoder eϕ(·) implemented as a shallow temporal
+convolutional network, followed by pooling and projection,
+yielding zt ∈ Rd. The retrieval key is the ℓ2-normalized
+embedding:
+
+qt =
+
+zt
+∥zt∥2
+
+.
+
+(5)
+
+The memory stores key–value pairs {(ki, Ei)}N
+Rd and Ei ∈ RH×C.
+
+i=1, where ki ∈
+
+Given a query qt, we compute cosine similarity and apply
+
+an age-based decay to down-weight stale memories:
+
+st,i = q⊤
+
+t ki · γ agei,
+
+γ ∈ (0, 1].
+
+(6)
+
+We retrieve the top-K entries and obtain a similarity vector
+st ∈ RK that stacks the retrieved similarities. This vector will
+later be used to assess retrieval quality.
+
+3) Aggregation to a Candidate Correction: Let {E(j)}K
+
+j=1
+and st =
+denote
+[st,(1), . . . , st,(K)]. Our default aggregation uses a Softmax
+kernel:
+
+retrieved residual
+
+trajectories,
+
+the
+
+wj =
+
+exp(st,(j)/Tp)
+m=1 exp(st,(m)/Tp)
+
+(cid:80)K
+
+,
+
+¯Et =
+
+K
+(cid:88)
+
+j=1
+
+wjE(j),
+
+(7)
+
+where Tp is a temperature parameter that regulates the sharp-
+ness of the retrieval distribution, with lower values empha-
+sizing the most closely matched historical trajectories. The
+aggregated ¯Et
+is a candidate residual-correction trajectory
+suggested by historical cases.
+
+E. Reliability-Controlled Retrieval Correction
+
+Retrieval correction is powerful but risky: if the retrieved
+cases come from a mismatched mode, applying the correction
+can degrade performance (negative transfer). This risk is non-
+trivial in industrial control loops, where biased forecasts of
+key quality variables can trigger inappropriate control actions
+whereas reliable feedback may only arrive much later. RRC
+therefore uses lightweight reliability controls to decide how
+much correction to apply.
+
+1) Retrieval Quality Estimation: A single maximum sim-
+ilarity max(st) is a useful but coarse signal: it can reject
+obviously mismatched retrievals, yet it is insufficient to charac-
+terize reliability in the high-similarity indistinguishable mode.
+In particular, a high top-1 similarity together with a flat/noisy
+top-K profile can indicate ambiguity and unstable neighbor
+sets. We thus estimate a retrieval-quality score ρt ∈ (0, 1)
+using a lightweight MLP gη over the entire similarity vector
+and the context embedding:
+
+ρt = gη([st ∥ zt]).
+
+(8)
+
+2) Refinement and Quality-Controlled Aggregation: Let ¯Et
+denote the aggregated candidate residual-correction trajectory.
+We apply a refinement network rξ(·) to map the candidate
+correction and context embedding to a refined trajectory:
+
+˜Et = rξ([ ¯Et ∥ zt]).
+
+(9)
+
+We then form the raw correction by Aggregating refined and
+unrefined candidates according to retrieval quality:
+
+Craw
+
+t = ρt ˜Et + (1 − ρt) ¯Et.
+
+(10)
+
+This design allows RRC to be expressive when retrieval quality
+is high, while falling back to the more conservative raw
+aggregation when retrieval is uncertain.
+
+3) Horizon-Aware Masking: The retrieval correction should
+be more conservative for distant horizons. In industrial fore-
+casting, uncertainty typically grows with horizon, and the
+transferability of error patterns decreases as unobserved dis-
+turbances propagate through the process. We therefore apply
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+6
+
+a horizon-aware mask to the raw correction before confidence
+gating:
+
+Ct ← m ⊙ Craw
+
+t
+
+,
+
+(11)
+
+where m ∈ RH is broadcast
+exponential decay mask
+
+to H × C. We adopt an
+
+m[h] = δh−1,
+
+δ ∈ (0, 1),
+
+(12)
+
+which shrinks long-horizon corrections while preserving near-
+term adaptivity.
+
+4) Similarity Gate and Compact Statistics Gate: We next
+compute a similarity gate based on the maximum similarity
+smax
+t = max(st):
+
+F. Time-Aware Bucketization
+
+Industrial processes often exhibit periodic modes induced
+by scheduling and environment (e.g., shift patterns, day/night
+cycles, seasonal
+temperature). To reduce mode mixing in
+residual trajectory memory bank, we partition the memory
+into B buckets, M = {M(b)}B
+b=1. Given time features St
+(e.g., hour-of-day, day-of-week, month/season), we compute a
+bucket index:
+
+bt = π(St) mod B,
+
+(17)
+
+and restrict retrieval and storage to M(bt). This period-aware
+routing reduces cross-mode interference and lowers retrieval
+cost by shrinking the candidate set per query.
+
+t = σ(cid:0)κ(smax
+gsim
+
+t − τ )(cid:1),
+
+(13)
+
+G. Delayed-Feedback Memory Update
+
+where τ is a trust threshold and κ controls steepness. Although
+max(st) is not rich enough for fine-grained quality assessment,
+it is highly effective as a low-similarity rejector: when the best
+neighbor is weak (smax
+t ≪ τ ), correction should be suppressed
+regardless of the detailed top-K profile. When smax
+is high,
+gsim
+saturates and the finer decision is delegated to ρt and
+t
+gconf
+.
+t
+
+t
+
+Additionally, to prevent abnormally large or unstable cor-
+rections, we use a compact statistics gate computed on the
+masked correction Ct. Let
+
+ωt = (cid:2)mean(| ˆYbase
+
+t
+
+|), std( ˆYbase
+
+t
+
+), mean(|Ct|), std(Ct)(cid:3).
+
+t
+
+t
+
+(14)
+We compute gconf
+= gψ([zt ∥ ωt]) ∈ (0, 1) using a small
+MLP. Importantly, gconf
+does not reuse max(st);
+is a
+magnitude/stability guardrail
+that down-weights corrections
+that are disproportionately large relative to the current forecast
+scale, a common failure mode under industrial noise. Using
+only compact summary statistics rather than the full sequences
+keeps the gate robust and lightweight.
+
+it
+
+5) Effective Confidence and Final Prediction: Finally, RRC
+applies the masked correction Ct only when retrieval is valid,
+and scales it by an effective confidence that combines (i) the
+coarse similarity rejector gsim
+, (ii) the fine-grained retrieval-
+quality score ρt, and (iii) the magnitude/stability guardrail
+gconf
+t
+
+:
+
+t
+
+αt = gconf
+
+t
+
+· ρt · gsim
+
+t
+
+The final forecast is then
+
+ˆYfinal
+
+t = ˆYbase
+
+t + αtCt.
+
+(15)
+
+(16)
+
+The above design acts as a risk controller in online adap-
+tion: αt increases only when (a) the retrieved neighbors are
+sufficiently similar, (b) the top-K similarity profile indicates
+reliable retrieval (high ρt), and (c) the masked correction is
+not abnormally large or unstable relative to the current forecast
+scale. Otherwise, αt collapses toward zero and the system falls
+back to the frozen backbone, which is particularly valuable
+under delayed supervision where aggressive online fitting is
+hard to perform causally and risky to validate promptly.
+
+In many industrial processes, the realized backbone residual
+trajectory Et can only be computed after the corresponding
+ground truth Yt becomes available. To strictly preserve causal-
+ity, R-ARC adopts a delayed write protocol. When making a
+forecast at time t, we cache the context needed for future
+writing in a pending buffer:
+
+Ct = ( ˜Gt, ˆYbase
+
+t
+
+, bt).
+
+(18)
+
+Once Yt arrives, we compute the realized residual trajectory
+
+Et = Yt − ˆYbase
+
+t
+
+,
+
+(19)
+
+and write a new case into the corresponding bucketed mem-
+ory M(bt) by inserting the key–value pair. This caching-
+and-writing mechanism ensures that the online system never
+uses future information when producing forecasts, while still
+accumulating residual trajectories as soon as delayed feedback
+becomes available.
+
+Each bucket has a fixed capacity. When full, we evict stale
+or uninformative entries using a combined criterion that favors
+(i) informative cases with large systematic residual magnitude,
+(ii) recent cases, and (iii) frequently retrieved cases. We also
+apply active forgetting by decaying importance over time
+and pruning entries that become too old or too small, which
+helps the memory track evolving modes under non-stationarity.
+For clarity, the complete online procedure is summarized in
+Algorithm 1.
+
+H. Computational Complexity
+
+Let C be the number of variables, d be the RRC feature
+dimension, and Nb the number of entries in the active bucket.
+In each step, RRC adds (i) snippet encoding O(P · C · d),
+(ii) exact similarity computation O(Nb · d), and (iii) residual
+aggregation O(K · H · C), in addition to one forward pass
+of the frozen backbone. Bucketization reduces Nb by routing
+retrieval to a subset of memory entries. The memory stores
+keys and residual trajectories, requiring O(Nb · (d + H · C))
+per bucket. Compared with gradient-based online adaptation
+that maintains optimizer states for large backbones, R-ARC
+offers a compact memory footprint and a practical accuracy–
+efficiency trade-off.
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+7
+
+Algorithm 1 R-ARC Online Protocol with Delayed-Feedback
+Residual Memory
+Input: frozen backbone fθ, horizon H, raw snippet length P ,
+top-K, buckets B, horizon mask m
+Initialize: bucketed memory {M(b)}B
+W ← ∅
+
+b=1, pending buffer
+
+1: for each time step t = 1, 2, . . . do
+// (A) Delayed write for t − H
+2:
+if t > H then
+
+3:
+4:
+5:
+
+6:
+
+7:
+
+8:
+9:
+
+10:
+
+11:
+12:
+
+13:
+
+14:
+
+15:
+
+16:
+
+17:
+
+Pop ( ˜Gt−H , ˆYbase
+t−H , bt−H ) from W
+Observe Yt−H and compute Et−H ← Yt−H −
+ˆYbase
+t−H
+Insert (normalize(eϕ( ˜Gt−H )), Et−H ) into M(bt−H )
+with eviction/forgetting
+
+t ← fθ(Xt, St)
+
+end if
+// (B) Forecast at time t
+Receive Xt and time features St; set bt ← π(St) mod
+B
+Extract raw snippet Gt ∈ RP ×C and form augmented
+snippet ˜Gt by appending statistic tokens
+Base forecast ˆYbase
+Encode snippet zt ← eϕ( ˜Gt) and normalize key qt ←
+normalize(zt)
+Retrieve top-K residuals from M(bt) and obtain simi-
+larities st
+Aggregate candidate correction ¯Et ← (cid:80)K
+with wj = Softmax(st/T )
+Estimate retrieval quality ρt ← gη([st ∥ zt]) and refine
+˜Et ← rξ([ ¯Et ∥ zt])
+Form correction Ct ← ρt ˜Et + (1 − ρt) ¯Et and apply
+horizon mask Ct ← m ⊙ Ct
+Compute
+similarity/quality/statistics
+t ← ˆYbase
+ˆYfinal
+Push ( ˜Gt, ˆYbase
+
+confidence
+gates
+
+via
+output
+
+j=1 wjE(j)
+
+t + αtCt
+
+, bt) into W
+
+effective
+
+and
+
+αt
+
+t
+
+18:
+19: end for
+
+III. EXPERIMENTS
+
+A. Experimental Setup
+
+1) Datasets: We evaluate R-ARC on four different multi-
+variate datasets, including two public benchmarks from [17],
+and two real-world industrial process datasets. Each sample
+contains a timestamp and multiple variates:
+
+• ETTm1: Electricity transformer measurements sampled
+every 15 minutes, with clear periodic patterns and gradual
+distribution shifts.
+
+• Weather: A dataset sampled every 10 minutes,
+
+this
+dataset is characterized by complex climatic dynamics
+and significant variance evolution.
+
+• Flotation: A mineral flotation production process dataset
+sampled every 30 minutes. The operating conditions
+change over
+leading to recurring and mode-
+dependent drifts.
+
+time,
+
+• Grinding: A mineral grinding circuit dataset sampled at
+one-minute intervals. It exhibits operating mode shifts
+and high-frequency process fluctuations driven by varying
+
+ore properties, which requires the model to possess strong
+plasticity for rapid adaptation.
+
+To quantify dataset non-stationarity, Table II reports four
+normalized statistics computed per variate and then averaged
+within each dataset: (1) Segment Mean Drift (∆µ); (2) Seg-
+ment Variance Drift (∆σ2); (3) Local Variation (|∇|) measured
+by the mean absolute slope of piecewise trends; and (4)
+Seasonal Strength (S). Grinding exhibits the strongest local
+variation (|∇| = 4.38 × 10−4), while Grinding also shows
+the largest variance drift (∆σ2 = 0.728). ETTm1 is the most
+periodic dataset with S = 0.53.
+
+All datasets are split chronologically following the online
+protocol in our framework: the first 20% for offline pretraining,
+the next 10% for validation, and the remaining 70% streamed
+sequentially for online evaluation.
+
+TABLE II
+STATISTICAL PROPERTIES OF DATASETS (NORMALIZED).
+
+Dataset
+
+ETTm1
+
+Weather
+
+Flotation
+
+Grinding
+
+Length
+Dims
+Freq
+∆µ
+∆σ2
+|∇|
+S
+
+69,680
+7
+15m
+0.478
+0.381
+1.05 × 10−4
+0.53
+
+52,696
+21
+10m
+0.352
+0.538
+1.03 × 10−4
+0.23
+
+5,335
+12
+30m
+0.500
+0.354
+2.00 × 10−3
+N/A
+
+21,600
+12
+1m
+0.328
+0.728
+4.38 × 10−4
+N/A
+
+2) Baselines: We compare R-ARC against representative
+online adaptation baselines covering naive fine-tuning, replay-
+based continual learning, and retrieval-based adaptation. All
+methods share the same forecasting backbone and data stream;
+they differ only in how they update model parameters when
+new ground-truth observations arrive. Table III summarizes the
+compared baselines.
+
+3) Experimental Settings:
+
+a) Backbone: All methods use the same forecasting
+backbone, iTransformer [?], it is a Transformer-style forecaster
+that inverts the modeling perspective by treating variables as
+tokens, which facilitates learning cross-variable dependencies
+and long-range temporal patterns in multivariate series. To
+avoid confounding architectural choices with adaptation ef-
+fects, we use a unified iTransformer configuration across all
+datasets and keep it fixed for all compared methods; dataset-
+specific differences are handled only through the input/output
+horizons and the online update rules.
+
+b) Input/Output Lengths: For the public benchmarks
+(ETTm1 and Weather), we follow common forecasting pro-
+tocols used in prior work ??, setting the input
+length to
+512 and evaluating three horizons {24, 48, 96}. For industrial
+datasets,
+the window lengths and forecasting horizons are
+strategically selected to be commensurate with the specific
+process dynamics and operational conditions. For Flotation
+dataset, an input window of 64 and horizons of {2, 10, 24}. For
+the Grinding dataset, we employ a longer input window of 300
+and extended horizons of {15, 30, 60}. These configurations
+ensure that the model’s predictive capabilities align with the
+practical time scales.
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+8
+
+TABLE III
+BASELINE OVERVIEW.
+
+Method
+
+Type
+
+Memory Description
+
+Frozen
+Online
+
+ER [?]
+
+None
+Fine-tune
+
+Replay
+
+DERpp [21]
+
+Replay
+
+ACL [16]
+
+Replay
+
+CLSER [22]
+
+Regularize
+
+MIR [23]
+
+Replay
+
+SOLID [19]
+
+Retrieval
+
+R-ARC
+
+Ours
+
+No
+No
+
+Yes
+
+Yes
+
+Yes
+
+Yes
+
+Yes
+
+Yes
+
+Yes
+
+No online update; evaluates the pure pretrained backbone.
+Naive SGD fine-tuning on the most recent supervised batch; prone to forgetting
+under drift.
+Experience replay with a finite buffer; updates backbone with mixed current and
+replayed samples.
+Replay with distillation/regularization to preserve previous predictions while
+learning new data.
+Reservoir replay with auxiliary soft buffer and task-interval updates to balance
+stability/plasticity.
+Consistency-regularized replay with stable/plastic EMA models to improve ro-
+bustness under drift.
+Maximally Interfered Retrieval: selects replay samples that maximize expected
+interference for better retention.
+Retrieval-augmented online adaptation: retrieves nearest windows and updates a
+lightweight head.
+Frozen backbone + residual-memory retrieval correction with strictly causal
+delayed writes and reliability gating control.
+
+TABLE IV
+HYPERPARAMETER SETTINGS FOR BASELINES. THE ONLINE LEARNING
+RATE IS FIXED AT 1 × 10−5 AND SHARED ACROSS ALL GRADIENT-BASED
+BASELINES.
+
+tuning effort.
+
+B. Main Results
+
+Method Key Hyperparameters
+
+Frozen
+Online
+ER
+DERpp
+ACL
+CLSER
+MIR
+SOLID
+R-ARC M = 1000, k = 5, τ = 0.5, B = 4.
+
+–
+Recent supervised batch for naive fine-tuning.
+Buffer B = 500, batch br = 8, loss weight 0.2.
+Buffer B = 1000, br = 8, regulation weight 0.2.
+Buffer B = 500, soft size 50, α/β/γ = 0.2, interval 200
+Buffer B = 500, regulation weight 0.15.
+Buffer B = 1000, subsample 500, k = 50.
+Window 500, samples 5, λperiod = 0.1.
+
+c) Optimization and Online Protocol: We pretrain the
+backbone with Adam for 10 epochs and select checkpoints
+by validation performance. During online evaluation, the test
+stream is processed sequentially with batch size 1 and without
+shuffling. After observing the ground truth at each time step,
+methods update their parameters using their respective online
+rules; for fair comparison, we tune the online learning rate
+on the validation split and use a shared value of 1 × 10−5
+for all gradient-based baselines unless a method uses its own
+optimizer by design.
+
+d) Evaluation Metrics: We report six evaluation metrics
+over all variates and the full prediction horizon: MSE, MAE,
+RMSE, MAPE, RSE, and R2. Except for R2 (higher is better),
+all metrics are lower-is-better. All metrics are computed on the
+streamed test set following the standard forecasting evaluation
+in our implementation.
+
+e) Method Hyperparameters: The hyperparameter set-
+tings of different baselines are summarized in Table IV. For
+fair comparison, all gradient-based baselines share the same
+backbone and follow the same online protocol. Memory ca-
+pacities and replay/retrieval sizes follow standard practice and
+are kept fixed across datasets, so that performance differences
+primarily reflect the adaptation mechanism rather than extra
+
+Tables V–VIII report the quantitative comparison under all
+datasets and horizons. Overall, R-ARC achieves the best MSE
+in 11 out of 12 settings and delivers broad improvements on
+MAE/RMSE/MAPE with higher R2 and lower RSE in most
+cases, demonstrating strong effectiveness under non-stationary
+online forecasting.
+
+a) Public Benchmarks: ETTm1 and Weather: On
+ETTm1 dataset, R-ARC consistently outperforms the strongest
+baseline MIR across all horizons,
+reducing MSE from
+0.492/0.664/0.757 to 0.481/0.645/0.708 for H = 24/48/96,
+respectively (up to ∼ 6.5% relative reduction at H = 96). Be-
+yond MSE, R-ARC also improves overall fit (e.g., at H = 96,
+R2 increases from 0.708 (MIR) to 0.726 and RSE decreases
+from 0.540 to 0.523), indicating that the correction remains
+effective under long-horizon uncertainty. On Weather dataset,
+the gains are more pronounced: R-ARC reduces MSE from
+the best baseline 0.903/1.309/1.716 (MIR, MIR, and ER for
+H = 24/48/96) to 0.862/1.196/1.514, achieving 4.5%, 8.6%,
+and 11.8% relative improvements. In contrast, naive Online
+fine-tuning can be unstable under drift: with only recent su-
+pervision, direct gradient updates may overfit transient modes
+and perturb the backbone’s global temporal representations,
+leading to error accumulation at longer horizons.
+
+b) Industrial Datasets: Flotation and Grinding: On
+Flotation dataset, the performance gap between methods is
+small, suggesting that the stream is less noisy and the drift is
+relatively mild/structured, leaving limited room for aggressive
+adaptation, Nevertheless, R-ARC remains consistently best in
+MSE across all three horizons, indicating that residual-memory
+retrieval can capture and compensate subtle, recurring bias
+patterns without destabilizing the base forecaster. On the more
+challenging Grinding dataset, R-ARC yields clear advantages
+for short- and mid-horizon forecasting, improving over the best
+baseline SOLID from 0.796 to 0.633 at H = 15 (∼ 20.5%
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+9
+
+TABLE V
+PERFORMANCE COMPARISON ON THE ETTM1 DATASET. BOLD INDICATES THE BEST RESULT, AND UNDERLINE INDICATES THE SECOND BEST.
+
+Method
+
+Frozen
+Online
+ER
+DERpp
+ACL
+CLSER
+MIR
+SOLID
+R-ARC
+
+24
+0.609
+0.615
+0.550
+0.550
+0.557
+0.571
+0.492
+0.609
+0.481
+
+MSE
+48
+0.797
+0.773
+0.702
+0.705
+0.709
+0.722
+0.664
+0.797
+0.645
+
+96
+0.852
+0.916
+0.836
+0.829
+0.840
+0.856
+0.757
+0.852
+0.708
+
+24
+0.479
+0.489
+0.458
+0.456
+0.460
+0.468
+0.430
+0.479
+0.428
+
+MAE
+48
+0.564
+0.552
+0.521
+0.522
+0.525
+0.531
+0.505
+0.564
+0.509
+
+96
+0.591
+0.604
+0.576
+0.572
+0.578
+0.584
+0.548
+0.591
+0.536
+
+24
+0.781
+0.784
+0.742
+0.742
+0.747
+0.755
+0.702
+0.780
+0.694
+
+RMSE
+48
+0.893
+0.879
+0.838
+0.839
+0.842
+0.850
+0.815
+0.893
+0.803
+
+96
+0.923
+0.957
+0.915
+0.911
+0.916
+0.925
+0.870
+0.923
+0.842
+
+24
+2.255
+2.316
+2.231
+2.201
+2.240
+2.252
+2.088
+2.255
+2.078
+
+MAPE
+48
+2.698
+2.605
+2.470
+2.468
+2.501
+2.491
+2.422
+2.698
+2.488
+
+96
+2.865
+2.801
+2.690
+2.677
+2.683
+2.721
+2.563
+2.865
+2.585
+
+24
+0.765
+0.763
+0.788
+0.788
+0.785
+0.780
+0.810
+0.765
+0.814
+
+R2
+48
+0.692
+0.701
+0.729
+0.728
+0.726
+0.721
+0.744
+0.692
+0.751
+
+96
+0.671
+0.646
+0.677
+0.680
+0.676
+0.670
+0.708
+0.671
+0.726
+
+24
+0.485
+0.487
+0.461
+0.461
+0.464
+0.469
+0.436
+0.485
+0.431
+
+RSE
+48
+0.555
+0.546
+0.521
+0.522
+0.523
+0.528
+0.506
+0.555
+0.499
+
+96
+0.574
+0.595
+0.568
+0.566
+0.569
+0.575
+0.540
+0.574
+0.523
+
+TABLE VI
+PERFORMANCE COMPARISON ON THE WEATHER DATASET. BOLD INDICATES THE BEST RESULT, AND UNDERLINE INDICATES THE SECOND BEST.
+
+Method
+
+Frozen
+Online
+ER
+DERpp
+ACL
+CLSER
+MIR
+SOLID
+R-ARC
+
+24
+0.998
+1.648
+0.962
+0.952
+0.981
+1.225
+0.903
+0.998
+0.862
+
+MSE
+48
+1.372
+2.650
+1.329
+1.320
+1.351
+1.568
+1.309
+1.372
+1.196
+
+96
+1.724
+3.568
+1.716
+1.792
+1.766
+1.766
+1.726
+1.724
+1.514
+
+24
+0.493
+0.713
+0.494
+0.492
+0.500
+0.575
+0.475
+0.493
+0.450
+
+MAE
+48
+0.621
+0.926
+0.620
+0.617
+0.627
+0.692
+0.613
+0.621
+0.570
+
+96
+0.737
+1.077
+0.743
+0.754
+0.752
+0.752
+0.742
+0.737
+0.682
+
+24
+0.999
+1.284
+0.981
+0.976
+0.990
+1.107
+0.950
+0.999
+0.928
+
+RMSE
+48
+1.172
+1.628
+1.153
+1.149
+1.162
+1.252
+1.144
+1.171
+1.094
+
+96
+1.313
+1.889
+1.310
+1.339
+1.329
+1.329
+1.314
+1.313
+1.230
+
+24
+1.675
+2.507
+1.773
+1.742
+1.785
+2.049
+2.100
+1.675
+1.599
+
+MAPE
+48
+2.085
+3.322
+2.228
+2.193
+2.292
+2.524
+2.443
+2.087
+2.089
+
+96
+2.486
+3.757
+2.593
+2.624
+2.634
+2.634
+2.932
+2.486
+2.431
+
+24
+0.835
+0.728
+0.841
+0.843
+0.838
+0.798
+0.851
+0.836
+0.858
+
+R2
+48
+0.774
+0.563
+0.781
+0.783
+0.777
+0.742
+0.784
+0.774
+0.803
+
+96
+0.716
+0.412
+0.717
+0.705
+0.709
+0.709
+0.716
+0.716
+0.751
+
+24
+0.406
+0.521
+0.398
+0.396
+0.402
+0.449
+0.386
+0.406
+0.377
+
+RSE
+48
+0.476
+0.661
+0.468
+0.466
+0.472
+0.508
+0.464
+0.475
+0.444
+
+96
+0.533
+0.767
+0.532
+0.543
+0.539
+0.539
+0.533
+0.533
+0.499
+
+TABLE VII
+PERFORMANCE COMPARISON ON THE FLOTATION DATASET. BOLD INDICATES THE BEST RESULT, AND UNDERLINE INDICATES THE SECOND BEST.
+
+Method
+
+Frozen
+Online
+ER
+DERpp
+ACL
+CLSER
+MIR
+SOLID
+R-ARC
+
+2
+1.141
+1.127
+1.125
+1.122
+1.125
+1.123
+1.171
+1.140
+1.118
+
+MSE
+10
+1.228
+1.228
+1.223
+1.221
+1.223
+1.223
+1.251
+1.228
+1.214
+
+24
+1.409
+1.434
+1.413
+1.413
+1.415
+1.421
+1.417
+1.409
+1.393
+
+2
+0.699
+0.685
+0.684
+0.683
+0.684
+0.684
+0.703
+0.699
+0.680
+
+MAE
+10
+0.737
+0.723
+0.721
+0.721
+0.721
+0.722
+0.735
+0.737
+0.719
+
+24
+0.796
+0.789
+0.782
+0.782
+0.783
+0.786
+0.789
+0.796
+0.778
+
+2
+1.068
+1.062
+1.061
+1.059
+1.061
+1.060
+1.082
+1.068
+1.057
+
+RMSE
+10
+1.108
+1.108
+1.106
+1.105
+1.106
+1.106
+1.119
+1.108
+1.102
+
+24
+1.187
+1.197
+1.189
+1.189
+1.190
+1.192
+1.190
+1.187
+1.180
+
+2
+4.086
+3.901
+3.930
+3.910
+3.904
+3.908
+4.037
+4.085
+3.892
+
+MAPE
+10
+4.213
+4.083
+4.050
+4.046
+4.064
+4.060
+4.284
+4.212
+4.062
+
+24
+4.487
+4.347
+4.250
+4.253
+4.358
+4.285
+4.355
+4.487
+4.249
+
+2
+0.651
+0.655
+0.656
+0.657
+0.656
+0.657
+0.642
+0.651
+0.658
+
+R2
+10
+0.625
+0.625
+0.626
+0.627
+0.626
+0.626
+0.618
+0.625
+0.629
+
+24
+0.571
+0.563
+0.569
+0.569
+0.568
+0.567
+0.568
+0.570
+0.575
+
+2
+0.590
+0.587
+0.586
+0.584
+0.587
+0.586
+0.598
+0.590
+0.575
+
+RSE
+10
+0.612
+0.612
+0.611
+0.610
+0.611
+0.611
+0.618
+0.612
+0.609
+
+24
+0.656
+0.661
+0.654
+0.656
+0.657
+0.658
+0.657
+0.655
+0.652
+
+TABLE VIII
+PERFORMANCE COMPARISON ON THE GRINDING DATASET. BOLD INDICATES THE BEST RESULT, AND UNDERLINE INDICATES THE SECOND BEST.
+
+Method
+
+Frozen
+Online
+ER
+DERpp
+ACL
+CLSER
+MIR
+SOLID
+R-ARC
+
+15
+0.808
+1.717
+1.889
+1.510
+1.878
+1.683
+1.011
+0.796
+0.633
+
+MSE
+30
+1.426
+4.941
+7.840
+8.317
+11.634
+8.468
+1.781
+1.423
+1.328
+
+60
+2.328
+13.329
+23.727
+21.720
+14.592
+14.272
+5.086
+2.327
+2.473
+
+15
+0.149
+0.197
+0.188
+0.178
+0.187
+0.187
+0.156
+0.148
+0.131
+
+MAE
+30
+0.197
+0.282
+0.315
+0.319
+0.335
+0.328
+0.211
+0.196
+0.181
+
+60
+0.260
+0.479
+0.529
+0.504
+0.459
+0.457
+0.314
+0.260
+0.245
+
+15
+0.899
+1.310
+1.374
+1.229
+1.370
+1.297
+1.006
+0.892
+0.796
+
+RMSE
+30
+1.194
+2.223
+2.800
+2.884
+3.411
+2.910
+1.334
+1.193
+1.152
+
+60
+1.526
+3.651
+4.871
+4.660
+3.820
+3.778
+2.255
+1.525
+1.573
+
+15
+0.601
+0.737
+0.667
+0.647
+0.662
+0.659
+0.645
+0.599
+0.589
+
+MAPE
+30
+0.755
+0.974
+1.000
+1.028
+1.044
+0.964
+0.867
+0.756
+0.780
+
+60
+0.945
+1.501
+1.541
+1.605
+1.370
+1.365
+1.085
+0.945
+0.941
+
+15
+0.963
+0.922
+0.914
+0.931
+0.915
+0.924
+0.954
+0.964
+0.971
+
+R2
+30
+0.935
+0.775
+0.644
+0.622
+0.471
+0.615
+0.919
+0.935
+0.940
+
+60
+0.895
+0.394
+0.179
+0.012
+0.336
+0.351
+0.769
+0.894
+0.888
+
+15
+0.192
+0.279
+0.293
+0.262
+0.292
+0.277
+0.214
+0.190
+0.170
+
+RSE
+30
+0.255
+0.474
+0.597
+0.615
+0.727
+0.620
+0.285
+0.254
+0.246
+
+60
+0.325
+0.778
+1.039
+0.994
+0.815
+0.806
+0.481
+0.324
+0.335
+
+reduction) and from 1.423 to 1.328 at H = 30 (∼ 6.7%
+reduction). For the long horizon H = 60, SOLID is slightly
+better in MSE (2.327 vs. 2.473), while R-ARC achieves the
+best MAE/MAPE (0.245/0.941). Because that R-ARC is more
+accurate for most time steps, but occasionally makes a few
+much larger errors at this very noisy long horizon, which
+are heavily penalized by MSE due to the squared term. This
+indicates that long-horizon residual correction can sometimes
+over-correct when uncertainty is high, and motivates making
+the correction more conservative for distant horizons via
+stronger masking and stricter reliability gating.
+
+c) Temporal Stability under Drift: Fig. 3 visualizes the
+rolling MSE trajectories along the test stream. Across all
+datasets, R-ARC consistently tracks the lowest error envelope
+and shows smooth transitions after abrupt changes, indicating
+stable adaptation without catastrophic forgetting. In particular,
+the Online baseline exhibits pronounced error spikes and
+sustained degradation on Weather and Grinding, confirming
+that directly applying gradient updates to a drifting stream
+can amplify noise and accumulate bias. Replay-based methods
+alleviate degradation but remain higher and less stable than R-
+ARC, which suggests that what to correct is as important as
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+10
+
+Fig. 3. Rolling MSE on the streamed test set. R-ARC maintains the lowest error trajectory and reacts robustly to distribution shifts, while naive Online
+fine-tuning exhibits large error inflation under drift.
+
+Fig. 4. Segment-wise mean MSE on ETTm1 (stream split into Early/Middle/Late thirds). R-ARC delivers the best performance in most segments, with the
+most prominent gains in the drift-heavy Middle segment, showing its sustained effectiveness over long streams.
+
+how to retain samples.
+
+d) When the Gains Occur: To examine how performance
+evolves over time, Fig. 4 reports the mean MSE computed
+on the early, middle, and late thirds of the ETTm1 streamed
+test set. R-ARC delivers clear and consistent improvements
+in the early and (drift-heavy) middle segments,
+indicating
+that its residual-memory correction can adapt quickly and
+remain effective as the operating condition changes. In the
+late segment, R-ARC stays competitive, suggesting that the
+correction does not rely on a short-lived effect and does not
+degrade over long streams. By contrast, naive Online fine-
+tuning tends to show a delayed-benefit pattern: it may improve
+in the late segment after sufficient on-stream updates, but
+lags behind in earlier segments, suggesting slower and less
+consistent adaptation under drift compared with R-ARC.
+
+e) Effect of Cross-Horizon Correction: Fig. 5 compares
+the backbone’s per-step MSE (blue) with R-ARC’s corrected
+MSE (red) on the Flotation stream. The corrected points are
+consistently lower than the base points, especially during high-
+error bursts, showing that R-ARC learns to apply stronger
+corrections exactly when the backbone is likely to be biased
+
+under drift. To quantify this effect, we compute statistics from
+the base–corrected MSE pairs in the correction trace: R-ARC
+reduces the average MSE from 1.135 to 0.945 (16.8% relative
+reduction) and improves 98.5% of the predictions, while
+keeping the worst-case error essentially unchanged (max MSE
+11.95 → 11.81). This indicates that the gating mechanism
+largely prevents harmful over-correction and yields robust
+gains in practice.
+
+f) Efficiency and Memory Usage: In addition to accu-
+racy, industrial soft sensors require low latency and bounded
+memory. Fig. 6 summarizes the runtime/accuracy trade-off on
+Flotation (L = 64, H = 24). The static Frozen baseline is the
+fastest (5.89 ms/step) but yields higher error (MSE 1.409).
+R-ARC achieves the best MSE (≈ 1.39) with a moderate
+latency (32.82 ms/step), and is markedly more efficient than
+the strongest replay-based retrieval baseline MIR (111.77
+ms/step) while also using substantially less memory (136.9
+MB vs. 272.6 MB). Compared with gradient-based replay
+baselines (ER/DERpp/ACL, 27–29 ms/step), R-ARC incurs
+a small overhead but provides consistently better accuracy,
+suggesting that retrieval-correction is a practical adaptation
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+11
+
+Fig. 5. Per-step error before and after correction on Flotation dataset). Each timestamp shows the backbone MSE (blue) and the corrected MSE (red). The
+correction reduces most spikes while rarely increasing the error, indicating a stable “retrieve-and-correct” behavior under industrial noise.
+
+Fig. 6. Accuracy–efficiency trade-off on Flotation (L = 64, H = 24). Each
+point is a method; the x-axis is average latency (ms/step), the y-axis is MSE,
+and the bubble size reflects the peak memory usage (MB).
+
+mechanism under realistic compute constraints.
+
+g) The Similarity Distribution Challenge: To further
+understand why simple retrieval can fail and how R-ARC’s
+mechanisms operate, we analyze the distribution of retrieval
+similarities during inference. As illustrated in the similarity
+histogram (Fig. 7), similarities concentrate heavily in the high-
+similarity mode: for example, on ETTm1, 94.4% of logged
+steps have mean similarity ≥ 0.90 and 72.9% have mean
+similarity ≥ 0.95.
+
+This phenomenon highlights the difficulty of traditional
+retrieval-augmented forecasting. In high-dimensional
+latent
+spaces, historical instances tend to cluster, making it chal-
+lenging for a traditional methods to distinguish between a
+truly relevant error pattern and a contextually mismatched one.
+This high-density distribution explains why hard-thresholding
+methods often fail to filter out noise.
+
+R-ARC addresses this challenge with a reliability-aware
+retrieval mechanism that goes beyond hard-thresholding on
+a single similarity score. Specifically, it estimates retrieval
+quality by conditioning on the full top-K similarity profile,
+enabling nuanced decisions in the high-similarity moed (e.g.,
+separating stable neighbor sets from ambiguous ones under
+state aliasing), and then applies a similarity-based sigmoid gate
+to introduce non-linear selectivity so that near-perfect matches
+
+Fig. 7. Histogram of mean retrieval similarity. Most retrieved neighbors are
+highly similar, which compresses the similarity range and makes it difficult
+for naive retrieval to reliably separate helpful vs. harmful references.
+
+receive much higher confidence while merely “similar” ref-
+erences are strongly suppressed. Together, these designs turn
+retrieval augmentation into a context-aware and risk-controlled
+correction process, allowing the model to exploit memory
+when it is reliable and avoid negative transfer when it is not
+in non-stationary time series.
+
+C. Ablation Study
+
+To quantify the contribution of each design choice in
+the R-ARC, we conduct an ablation study by disabling one
+component at a time while keeping the frozen backbone and
+the online protocol unchanged. We evaluate on representative
+and practically relevant settings for each dataset (ETTm1:
+L = 512, H = 96; Weather: L = 512, H = 96; Flotation:
+L = 64, H = 24; Grinding: L = 300, H = 15). Table IX
+summarizes the ablation configurations, and Fig. 8 visualizes
+their multi-metric performance (radar values are normalized
+per dataset for readability; larger area indicates better overall
+performance).
+
+a) Overall Findings: Across all datasets,
+
+the full R-
+ARC configuration achieves the best or near-best performance
+in a balanced sense, while each ablation degrades one or
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+12
+
+Fig. 8. Ablation results of R-ARC across four datasets. For readability, each metric is normalized using dataset-specific reference ranges (higher is better),
+highlighting the overall balance of accuracy and robustness under drift.
+
+TABLE IX
+ABLATION CONFIGURATIONS OF RRC. BUCKETS: TIME-AWARE MEMORY
+BUCKETIZATION; MASK: HORIZON-AWARE CORRECTION MASK;
+REFINEMENT: REFINEMENT NETWORK (W/O REFINEMENT USES THE
+AGGREGATED RESIDUAL TRAJECTORY DIRECTLY); GATE: ADAPTIVE
+CONFIDENCE GATING (SIMILARITY/QUALITY/STATISTICS).
+
+Setting
+
+Buckets Mask Refinement Gate
+
+R-ARC
+w/o Buckets
+w/o Mask
+w/o Refinement
+w/o Gate
+
+Yes
+No
+Yes
+Yes
+Yes
+
+Yes
+Yes
+No
+Yes
+Yes
+
+Yes
+Yes
+Yes
+No
+Yes
+
+Yes
+Yes
+Yes
+Yes
+No
+
+more metrics. Notably, removing risk-control components
+(Mask/Gate) tends to hurt the long-horizon and noisy modes
+most, confirming that retrieval correction must be reliability-
+aware to avoid negative transfer.
+
+b) Effect of Time-Aware Bucketization: Removing buck-
+etization (w/o Buckets) consistently degrades accuracy, in-
+dicating that routing retrieval to period-consistent memories
+reduces mode interference. The effect is most pronounced
+on industrial data: on Flotation, MSE increases from 1.118
+to 1.154 and R2 drops from 0.658 to 0.650, suggesting that
+mixing residuals across recurring operating modes leads to
+context-mismatched corrections. Similar but smaller degrada-
+tions are observed on ETTm1/Weather/Grinding, where MSE
+rises from 0.708 to 0.726 (ETTm1), 1.514 to 1.540 (Weather),
+and 0.633 to 0.653 (Grinding).
+
+it (w/o Mask),
+
+c) Necessity of Horizon-Aware Masking: The Horizon
+Mask is primarily a stability mechanism for longer horizons:
+without
+the model becomes markedly less
+robust on the long-horizon Weather task, where MSE increases
+from 1.514 to 1.611 and MAPE worsens from 2.431 to 3.197.
+This supports the motivation that correction transferability de-
+cays with horizon and that unmasked long-horizon corrections
+can amplify retrieval noise. In contrast, the impact is milder on
+short-horizon settings such as Grinding (H = 15), where MSE
+only increases from 0.633 to 0.648, consistent with reduced
+
+long-horizon uncertainty.
+
+d) Contribution of the Refinement Module: The refine-
+ment network and quality-controlled Aggregation contribute
+to learning a context-dependent residual shape beyond a pure
+weighted average of retrieved trajectories. Disabling refine-
+ment (w/o Refinement) leads to clear degradations on ETTm1
+(MSE 0.708 → 0.786) and Grinding (0.633 → 0.720), indicat-
+ing that a lightweight nonlinear mapper helps adapt residual
+templates to the current condition under drift. On Weather,
+w/o Refinement slightly improves MAPE (2.431 → 2.366) but
+still worsens MSE/RMSE, suggesting that refinement mainly
+benefits squared-error optimality and overall stability rather
+than uniformly improving every metric.
+
+e) Importance of Adaptive Confidence Gating: Adaptive
+gating is the key safeguard against negative transfer. Without
+it (w/o Gate), the corrector applies residuals without sufficient
+reliability screening, causing severe error inflation on the
+Grinding stream: MSE nearly doubles from 0.633 to 1.201
+and R2 drops from 0.981 to 0.945. Similar failures appear
+on Weather, where MAPE increases from 2.431 to 3.208 and
+MSE rises to 1.581. These results validate the proposed safe-
+correction behavior: when retrieval is uncertain, the model
+should suppress correction and fall back to the frozen back-
+bone instead of forcing adaptation.
+
+IV. CONCLUSION
+
+This paper addresses the challenge of online soft sensor
+in non-stationary industrial streams where continuous concept
+drift and supervision delays coexist. In such environments,
+static backbones suffer from persistent bias, while conven-
+tional gradient-based updates are prone to numerical insta-
+bility and negative transfer. To address these challenges, we
+propose R-ARC, a plug-and-play online learning framework
+that decouples stable forecasting from adaptive plasticity.
+Unlike traditional methods relying on gradient updates, R-
+ARC maintains a strictly causal memory of multi-horizon
+residual trajectories, enabling the system to learn from delayed
+feedback without violating physical causality. By leverag-
+
+JOURNAL OF LATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021
+
+13
+
+[14] Z. Chen, K. Huang, D. Wu, C. Yang and W. Gui, “Open Multimode Pro-
+cess Monitoring: A Dual Memory-Based Continual Dictionary Learning
+Method,” IEEE Trans. Ind. Electron., vol. 72, no. 10, pp. 10662-10672,
+Oct. 2025.
+
+[15] K. Huang, H. Zhu, D. Wu, C. Yang and W. Gui, “EaLDL: Element-
+Aware Lifelong Dictionary Learning for Multimode Process Monitoring,”
+IEEE Trans. Neural Netw. Learn. Syst., vol. 36, no. 2, pp. 3744-3757, Feb.
+2025.
+
+[16] M. Wu, X. Zhou, S. Li and H. Shi, “An Adaptive Continual Learning
+Method for Nonstationary Industrial Time Series Prediction,” IEEE Trans.
+Ind. Inform., vol. 21, no. 2, pp. 1160-1169, Feb. 2025.
+
+[17] W. Cai, Y. Liang, X. Liu, J. Feng, and Y. Wu, “Msgnet: Learning multi-
+scale inter-series correlations for multivariate time series forecasting,” in
+Proc. AAAI Conf. Artif. Intell., Vancouver, BC, Canada, 2024, pp. 11141-
+11149.
+
+[18] Y. Liu et al., “iTransformer: Inverted Transformers Are Effective for
+Time Series Forecasting,” in Int. Conf. Learn. Represent., ICLR, Hybrid,
+Vienna, Austria, 2024, pp. 1-25.
+
+[19] M. Chen, L. Shen, H. Fu, Z. Li, J. Sun and C. Liu, “Calibration of Time-
+Series Forecasting: Detecting and Adapting Context-Driven Distribution
+Shift,” in Proc. ACM SIGKDD Int. Conf. Knowl. Discov. Data Min., 2024,
+pp. 341–352.
+
+[20] T. Schaul, J. Quan, I. Antonoglou and D. Silver, “Prioritized Experience
+Replay,” in 4th Int. Conf. Learn. Represent., ICLR 2016 - Conf. Track
+Proc., San Juan, Puerto Rico, 2016, pp. 1-1.
+
+[21] P. Buzzega, M. Boschini, A. Porrello, D. Abati and S. Calderara, “Dark
+experience for general continual learning: A strong, simple baseline,” in
+Proc. Adv. Neural Inf. Proces. Syst., Virtual, Online, 2020, pp. 1-1.
+[22] E. Arani, F. Sarfraz and B. Zonooz, “Learning Fast, Learning Slow: A
+General Continual Learning Method Based on Complementary Learning
+System,” in Int. Conf. Learn. Represent., ICLR, Virtual, Online, 2022, pp.
+1-1.
+
+[23] R. Aljundi, L. Caccia, E. Belilovsky, M. Caccia, M. Lin, L. Charlin
+and T. Tuytelaars, “Online Continual Learning With Maximally Interfered
+Retrieval,” in Proc. Adv. Neural Inf. Proces. Syst., Vancouver, BC, Canada,
+2019, pp. 1-1.
+
+ing context-aware representations for retrieval and a multi-
+stage reliability gate, R-ARC adaptively modulates correction
+strength, ensuring robust and safe-correction behavior in non-
+stationary industrial environments.
+
+Extensive evaluations on public benchmarks and real-world
+industrial processes demonstrate that R-ARC consistently im-
+proves forecasting accuracy while maintaining computational
+efficiency and bounded memory. The ablation studies further
+confirm that the integration of period-aware routing, horizon-
+consistent masking, and adaptive reliability gating is essential
+for preventing erroneous adaptations in noisy and open-world
+drifts.
+
+Future work will focus on two directions: (1) extending
+the framework to handle multi-modal industrial data, such as
+integrating visual froth features in flotation, and (2) developing
+automated meta-learning strategies for self-adaptive threshold
+tuning, further reducing the reliance on manual hyperparame-
+ter configuration in diverse application scenes.
+
+REFERENCES
+
+[1] Z. Chen et al., “E2AG: Entropy-Regularized Ensemble Adaptive Graph
+for Industrial Soft Sensor Modeling,” IEEE/CAA J. Autom. Sinica, vol.
+12, no. 4, pp. 745-760, Apr. 2025.
+
+[2] L. Cao et al.,“Comprehensive Analysis on Machine Learning Approaches
+for Interpretable and Stable Soft Sensors,” IEEE Trans. Instrum. Meas.,
+vol. 74, pp. 1-17, Apr. 2025.
+
+[3] X. Wang, Y. Wang, F. Lu, J. Zhou, L. Qin and C. Yang, “Adaptive Wavelet
+Normalization Network for Soft Sensor Modeling in Nonstationary Indus-
+trial Processes,” IEEE Trans. Ind. Inform., vol. 21, no. 12, pp. 9846-9856,
+Dec. 2025.
+
+[4] D. Yu et al., “Squeezing More Past Knowledge for Online Class-
+Incremental Continual Learning,” IEEE/CAA J. Autom. Sinica, vol. 10,
+no. 3, pp. 722-736, Mar. 2023.
+
+[5] X. Yuan, W. Xu, Y. Wang, C. Yang and W. Gui, “A Deep Residual
+PLS for Data-Driven Quality Prediction Modeling in Industrial Process,”
+IEEE/CAA J. Autom. Sinica, vol. 11, no. 8, pp. 1777-1785, Aug. 2024.
+[6] J. Hu, M. Wu, W. Cao and W. Pedrycz, “Soft-Sensing of Burn-Through
+Point Based on Weighted Kernel Just-in-Time Learning and Fuzzy Broad-
+Learning System in Sintering Process,” IEEE Trans. Ind. Inform., vol. 20,
+no. 5, pp. 7316-7324, May 2024.
+
+[7] Y. Xu, M. Wu, J. Hu, S. Du, W. Zhang, F. Peng, H. Li and W. Song, “Unit
+load prediction method based on weighted just-in-time learning with
+spatio-temporal characteristics for gas boiler power generation process,”
+Control Eng. Pract., vol. 160, 2025, Art. no. 106325.
+
+[8] X. Qin, K. Peng and H. Zhang, “A Novel Multimodal Process Monitoring
+Method Based on Improved Just-in-Time Learning-Assisted Stacked
+Quality-Related Autoencoder,” IEEE Trans. Instrum. Meas., vol. 74, 2025,
+Art. no. 3516011.
+
+[9] X. Wang, X. Liu and Y. Li, “An incremental model transfer method for
+complex process fault diagnosis,” IEEE/CAA J. Autom. Sinica, vol. 6, no.
+5, pp. 1268-1280, Sept. 2019.
+
+[10] J. Zhang, D. Zhou and M. Chen, “Adaptive Cointegration Analysis
+and Modified RPCA With Continual Learning Ability for Monitoring
+Multimode Nonstationary Processes,” IEEE Trans. Cybern., vol. 53, no.
+8, pp. 4841-4854, Aug. 2023.
+
+[11] K. Huang, W. Feng, Z. Chen, D. Wu, C. Yang and W. Gui, “Incremental
+Rank Continual Dictionary Learning for Multimode Process Monitoring
+With Continually Emerging Operational Mode,” IEEE Trans. Autom. Sci.
+Eng., vol. 22, 2025, pp. 17568-17580.
+
+[12] J. Zhang, D. Zhou, M. Chen and X. Hong, “Continual Learning-
+Based Probabilistic Slow Feature Analysis for Monitoring Multimode
+Nonstationary Processes,” IEEE Trans. Autom. Sci. Eng., vol. 21, no.
+1, pp. 733-745, Jan. 2024.
+
+[13] M. A. Benatia, M. Hafsi and S. Ben Ayed, “A continual learning ap-
+proach for failure prediction under non-stationary conditions: Application
+to condition monitoring data streams,” Comput. Ind. Eng., vol. 204, 2025,
+Art. no. 111049.
+
+

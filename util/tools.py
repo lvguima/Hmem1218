@@ -1,11 +1,14 @@
 import collections
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 import time
 from copy import deepcopy
 
-plt.switch_backend('agg')
+try:
+    import matplotlib.pyplot as plt
+    plt.switch_backend('agg')
+except ModuleNotFoundError:  # optional dependency for training/inference
+    plt = None
 
 
 def load_model_compile(model, model_pth, device, strict=False):
@@ -152,6 +155,8 @@ def visual(true, preds=None, name='./pic/test.pdf'):
     """
     Results visualization
     """
+    if plt is None:
+        raise RuntimeError("matplotlib is required for `visual()`, but it is not installed.")
     plt.figure()
     plt.plot(true, label='GroundTruth', linewidth=2)
     if preds is not None:
@@ -185,7 +190,6 @@ def test_params_flop(model, x_shape, x=None):
 
     # import torchinfo
     # torchinfo.summary(model, x_shape, depth=1)
-
 
 
 

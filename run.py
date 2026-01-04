@@ -96,6 +96,8 @@ parser.add_argument('--chrc_trust_threshold', type=float, default=0.5,
                     help='Similarity trust threshold for CHRC soft gating')
 parser.add_argument('--chrc_gate_steepness', type=float, default=10.0,
                     help='Steepness for CHRC soft gating')
+parser.add_argument('--chrc_gate_mode', type=str, default='adaptive',
+                    help="CHRC gate mode: adaptive (default) or fixed (apply unit correction when retrieval is valid)")
 parser.add_argument('--chrc_use_horizon_mask', type=str_to_bool, default=True,
                     help='Apply horizon-aware correction mask')
 parser.add_argument('--chrc_horizon_mask_mode', type=str, default='exp',
@@ -264,7 +266,11 @@ else:
 import platform
 
 if platform.system() == 'Windows':
-    torch.cuda.set_per_process_memory_fraction(48 / 61, 0)
+    if args.use_gpu:
+        try:
+            torch.cuda.set_per_process_memory_fraction(48 / 61, 0)
+        except Exception:
+            pass
 
 if args.use_gpu and args.use_multi_gpu:
     args.devices = args.devices.replace(' ', '')

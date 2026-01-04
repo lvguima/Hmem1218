@@ -69,6 +69,7 @@ class HMem(nn.Module):
                     use_refinement=getattr(args, 'chrc_use_refinement', True),
                     trust_threshold=getattr(args, 'chrc_trust_threshold', 0.5),
                     gate_steepness=getattr(args, 'chrc_gate_steepness', 10.0),
+                    gate_mode=getattr(args, 'chrc_gate_mode', 'adaptive'),
                     use_horizon_mask=getattr(args, 'chrc_use_horizon_mask', False),
                     horizon_mask_mode=getattr(args, 'chrc_horizon_mask_mode', 'exp'),
                     horizon_mask_decay=getattr(args, 'chrc_horizon_mask_decay', 0.98),

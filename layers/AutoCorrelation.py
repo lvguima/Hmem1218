@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt  # optional, used only for debugging/visualization
+except ModuleNotFoundError:
+    plt = None
 import numpy as np
 import math
 from math import sqrt
